@@ -48,4 +48,22 @@ router.get('/profile', auth, async (req, res) => {
   }
 });
 
+
+router.get('/is_server_fine',(req,res)=>{
+     try {
+
+      return res.status(200).json({
+        success:true,
+        message:"working fine"
+      })
+      
+     } catch (error) {
+          return res.status(500)
+          .json({
+            success:false,
+            message:"internal server error"
+          })
+     }
+})
+
 module.exports = router;

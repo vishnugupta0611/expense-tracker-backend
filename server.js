@@ -20,6 +20,7 @@ app.use('/api/expenses', require('./routes/expenses'));
 app.use('/api/spaces', require('./routes/spaces'));
 app.use('/api/analytics', require('./routes/analytics'));
 app.use('/api/shopping-list', require('./routes/shoppingList'));
+app.use('/api/schedule-events', require('./routes/scheduleEvents'));
 
 // Health check
 app.get('/health', (req, res) => {

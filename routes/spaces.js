@@ -11,7 +11,7 @@ const User = require('../models/User');
 // @access  Private
 router.get('/', auth, async (req, res) => {
   try {
-    const spaces = await Space.find({ members: req.userId }).populate('members', 'name email');
+    const spaces = await Space.find({ members: req.userId }).populate('members', 'name email avatar');
     res.json({ spaces });
   } catch (error) {
     console.error('Get spaces error:', error);
@@ -50,7 +50,7 @@ router.post('/', auth, async (req, res) => {
     });
 
     await space.save();
-    await space.populate('members', 'name email');
+    await space.populate('members', 'name email avatar');
 
     res.status(201).json({ space });
   } catch (error) {
@@ -65,7 +65,7 @@ router.post('/', auth, async (req, res) => {
 router.get('/:id', auth, async (req, res) => {
   try {
     const space = await Space.findOne({ _id: req.params.id, members: req.userId })
-      .populate('members', 'name email');
+      .populate('members', 'name email avatar');
 
     if (!space) {
       return res.status(404).json({ error: 'Space not found' });
@@ -107,7 +107,7 @@ router.post('/:id/expenses', auth, async (req, res) => {
     });
 
     await expense.save();
-    await expense.populate('paidBy splitBetween', 'name email');
+    await expense.populate('paidBy splitBetween', 'name email avatar');
 
     res.status(201).json({ expense });
   } catch (error) {
@@ -144,7 +144,7 @@ router.get('/:id/expenses', auth, async (req, res) => {
     }
 
     const expenses = await SpaceExpense.find(query)
-      .populate('paidBy splitBetween', 'name email')
+      .populate('paidBy splitBetween', 'name email avatar')
       .populate('comments.userId', 'name')
       .sort({ date: -1 });
 
@@ -261,7 +261,7 @@ router.put('/:id/settle', auth, async (req, res) => {
 
     space.settledAt = new Date();
     await space.save();
-    await space.populate('members', 'name email');
+    await space.populate('members', 'name email avatar');
     
     res.json({ space, message: 'All settlements cleared!' });
   } catch (error) {
@@ -318,7 +318,7 @@ router.put('/:id', auth, async (req, res) => {
     if (name) space.name = name;
 
     await space.save();
-    await space.populate('members', 'name email');
+    await space.populate('members', 'name email avatar');
     
     res.json(space);
   } catch (error) {
@@ -359,7 +359,7 @@ router.post('/:id/members', auth, async (req, res) => {
     });
 
     await space.save();
-    await space.populate('members', 'name email');
+    await space.populate('members', 'name email avatar');
     
     res.json(space);
   } catch (error) {

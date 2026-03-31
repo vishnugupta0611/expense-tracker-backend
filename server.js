@@ -32,6 +32,7 @@ app.use('/api/shopping-list', require('./routes/shoppingList'));
 app.use('/api/schedule-events', require('./routes/scheduleEvents'));
 app.use('/api/notes', require('./routes/notes'));
 app.use('/api/drive', require('./routes/drive'));
+app.use('/api/words', require('./routes/words'));
 
 // Health check
 app.get('/health', (req, res) => {

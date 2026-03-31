@@ -10,7 +10,8 @@ connectDB();
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Routes
 app.use('/api/auth', require('./routes/auth'));
@@ -21,6 +22,8 @@ app.use('/api/spaces', require('./routes/spaces'));
 app.use('/api/analytics', require('./routes/analytics'));
 app.use('/api/shopping-list', require('./routes/shoppingList'));
 app.use('/api/schedule-events', require('./routes/scheduleEvents'));
+app.use('/api/notes', require('./routes/notes'));
+app.use('/api/drive', require('./routes/drive'));
 
 // Health check
 app.get('/health', (req, res) => {

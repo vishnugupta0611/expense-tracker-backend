@@ -16,6 +16,7 @@ router.put('/profile', auth, async (req, res) => {
     if (avatar !== undefined) updates.avatar = avatar;
     
     // Handle budget updates
+    
     if (budgets) {
       if (budgets.monthly !== undefined) updates['budgets.monthly'] = budgets.monthly;
       if (budgets.daily !== undefined) updates['budgets.daily'] = budgets.daily;

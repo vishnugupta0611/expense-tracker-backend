@@ -9,7 +9,15 @@ const app = express();
 connectDB();
 
 // Middleware
-app.use(cors());
+const corsOptions = {
+  origin: true, // reflect request origin — allows any origin including production frontend
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  optionsSuccessStatus: 200, // some browsers (IE11) choke on 204
+};
+app.use(cors(corsOptions));
+app.options('/{*path}', cors(corsOptions)); // handle preflight — Express 5 syntax
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 

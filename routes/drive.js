@@ -7,35 +7,39 @@ const https = require('https');
 const crypto = require('crypto');
 
 // ── Cloudinary upload (any resource type) ────────────────────────────────────
-const uploadToCloudinary = (base64Data, mimeType, folder, filename) => {
+const uploadToCloudinary = (base64Data, mimeType, folder) => {
   return new Promise((resolve, reject) => {
-    const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
-    const apiKey    = process.env.CLOUDINARY_API_KEY;
-    const apiSecret = process.env.CLOUDINARY_API_SECRET;
-    const timestamp = Math.floor(Date.now() / 1000);
+    const cloudName  = process.env.CLOUDINARY_CLOUD_NAME;
+    const apiKey     = process.env.CLOUDINARY_API_KEY;
+    const apiSecret  = process.env.CLOUDINARY_API_SECRET;
+    const timestamp  = Math.floor(Date.now() / 1000);
 
-    // Determine resource_type
     let resourceType = 'raw';
     if (mimeType.startsWith('image/')) resourceType = 'image';
     else if (mimeType.startsWith('video/')) resourceType = 'video';
 
+    // Signature: sorted params alphabetically, appended with secret
     const sigStr = `folder=${folder}&timestamp=${timestamp}${apiSecret}`;
     const signature = crypto.createHash('sha1').update(sigStr).digest('hex');
 
-    const body = JSON.stringify({
+    const payload = {
       file: `data:${mimeType};base64,${base64Data}`,
       api_key: apiKey,
-      timestamp,
+      timestamp: String(timestamp),
       signature,
       folder,
-      resource_type: resourceType,
-    });
+    };
+    const body = JSON.stringify(payload);
+    const bodyLen = Buffer.byteLength(body, 'utf8');
 
     const options = {
       hostname: 'api.cloudinary.com',
       path: `/v1_1/${cloudName}/${resourceType}/upload`,
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': bodyLen,
+      },
     };
 
     const req = https.request(options, (res) => {
@@ -44,13 +48,17 @@ const uploadToCloudinary = (base64Data, mimeType, folder, filename) => {
       res.on('end', () => {
         try {
           const p = JSON.parse(data);
+          console.log('Cloudinary drive upload status:', res.statusCode);
           if (p.secure_url) resolve({ url: p.secure_url, publicId: p.public_id, size: p.bytes || 0 });
-          else reject(new Error(p.error?.message || 'Upload failed'));
+          else {
+            console.error('Cloudinary drive error:', JSON.stringify(p));
+            reject(new Error(p.error?.message || 'Upload failed'));
+          }
         } catch (e) { reject(e); }
       });
     });
     req.on('error', reject);
-    req.write(body);
+    req.write(body, 'utf8');
     req.end();
   });
 };
@@ -61,6 +69,24 @@ const hasAccess = (item, userId) => {
   return item.ownerId.toString() === uid ||
     item.members.some(m => m.toString() === uid);
 };
+
+// GET /api/drive/upload-signature — signed params for direct browser upload
+router.get('/upload-signature', auth, (req, res) => {
+  try {
+    const apiSecret = process.env.CLOUDINARY_API_SECRET;
+    const apiKey    = process.env.CLOUDINARY_API_KEY;
+    const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+    const timestamp = Math.floor(Date.now() / 1000);
+    const folder    = `spendly_drive/${req.userId}`;
+
+    const sigStr    = `folder=${folder}&timestamp=${timestamp}${apiSecret}`;
+    const signature = crypto.createHash('sha1').update(sigStr).digest('hex');
+
+    res.json({ timestamp, signature, apiKey, cloudName, folder });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to generate signature' });
+  }
+});
 
 // ── GET /api/drive?parentId=xxx  list items in a folder (or root) ─────────────
 // For the owner: show items in that folder
@@ -132,7 +158,30 @@ router.post('/folder', auth, async (req, res) => {
   }
 });
 
-// ── POST /api/drive/upload  upload file ──────────────────────────────────────
+// ── POST /api/drive/save-file  save file metadata after direct browser upload ──
+router.post('/save-file', auth, async (req, res) => {
+  try {
+    const { name, url, publicId, mimeType, size, parentId = null } = req.body;
+    if (!name || !url) return res.status(400).json({ error: 'name and url required' });
+    const item = await DriveItem.create({
+      ownerId: req.userId,
+      members: [],
+      name,
+      type: 'file',
+      parentId: parentId || null,
+      url,
+      mimeType: mimeType || '',
+      size: size || 0,
+      publicId: publicId || '',
+    });
+    res.status(201).json({ item });
+  } catch (e) {
+    console.error('Save file error:', e.message);
+    res.status(500).json({ error: 'Failed to save file' });
+  }
+});
+
+// ── POST /api/drive/upload  upload file (legacy — kept for compatibility) ──────
 router.post('/upload', auth, async (req, res) => {
   try {
     const { base64, mimeType, name, parentId = null, size = 0 } = req.body;

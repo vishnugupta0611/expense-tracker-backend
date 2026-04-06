@@ -3,17 +3,14 @@ const router = express.Router();
 const auth = require('../middleware/auth');
 const Expense = require('../models/Expense');
 const User = require('../models/User');
+const Wallet = require('../models/Wallet');
 
 // @route   POST /api/expenses
-// @desc    Add expense (quick add)
-// @access  Private
+
 router.post('/', auth, async (req, res) => {
   try {
     const { amount, category, description, date } = req.body;
-
-    if (!amount) {
-      return res.status(400).json({ error: 'Amount is required' });
-    }
+    if (!amount) return res.status(400).json({ error: 'Amount is required' });
 
     const expense = new Expense({
       userId: req.userId,
@@ -22,8 +19,14 @@ router.post('/', auth, async (req, res) => {
       description,
       date: date || new Date(),
     });
-
     await expense.save();
+
+    // Deduct from wallet balance (ignore if no wallet yet)
+    await Wallet.findOneAndUpdate(
+      { userId: req.userId },
+      { $inc: { balance: -parseFloat(amount) } }
+    );
+
     res.status(201).json({ expense });
   } catch (error) {
     console.error('Add expense error:', error);
@@ -32,25 +35,58 @@ router.post('/', auth, async (req, res) => {
 });
 
 // @route   GET /api/expenses
-// @desc    Get expenses with date filters
+// @desc    Get expenses with cursor-based pagination (2 days per page)
 // @access  Private
 router.get('/', auth, async (req, res) => {
   try {
-    const { startDate, endDate, category } = req.query;
+    const { before, category } = req.query; // before = ISO date cursor
     const query = { userId: req.userId };
 
-    if (startDate || endDate) {
-      query.date = {};
-      if (startDate) query.date.$gte = new Date(startDate);
-      if (endDate) query.date.$lte = new Date(endDate);
+    if (category) query.category = category;
+
+    // Find the 2 most recent distinct dates before the cursor
+    const dateQuery = before ? { ...query, date: { $lt: new Date(before) } } : query;
+
+    // Get distinct dates (grouped by day) — fetch enough to cover 2 days
+    const allDates = await Expense.aggregate([
+      { $match: dateQuery },
+      {
+        $group: {
+          _id: {
+            $dateToString: { format: '%Y-%m-%d', date: '$date', timezone: 'Asia/Kolkata' }
+          }
+        }
+      },
+      { $sort: { _id: -1 } },
+      { $limit: 2 },
+    ]);
+
+    if (allDates.length === 0) {
+      return res.json({ expenses: [], hasMore: false, nextCursor: null });
     }
 
-    if (category) {
-      query.category = category;
-    }
+    const oldestDay = allDates[allDates.length - 1]._id; // e.g. "2025-04-04"
 
-    const expenses = await Expense.find(query).sort({ date: -1 });
-    res.json({ expenses });
+    // Fetch all expenses for those 2 days
+    const dayStart = new Date(`${oldestDay}T00:00:00+05:30`);
+    const rangeQuery = {
+      ...query,
+      date: {
+        ...(before ? { $lt: new Date(before) } : {}),
+        $gte: dayStart,
+      },
+    };
+
+    const expenses = await Expense.find(rangeQuery).sort({ date: -1 });
+
+    // Check if there are more days beyond this batch
+    const hasMore = await Expense.exists({ ...query, date: { $lt: dayStart } });
+
+    res.json({
+      expenses,
+      hasMore: !!hasMore,
+      nextCursor: dayStart.toISOString(), // client passes this as `before` next time
+    });
   } catch (error) {
     console.error('Get expenses error:', error);
     res.status(500).json({ error: 'Failed to get expenses' });

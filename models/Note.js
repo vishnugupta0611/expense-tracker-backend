@@ -6,8 +6,10 @@ const noteSchema = new mongoose.Schema({
   blocks: {
     type: [
       {
-        type: { type: String, enum: ['h1', 'h2', 'text', 'image'], required: true },
+        type: { type: String, enum: ['h1', 'h2', 'text', 'image', 'code', 'divider'], required: true },
         content: { type: String, default: '' },
+        color: { type: String, default: '' },       // hex color e.g. "#e74c3c"
+        fontStyle: { type: String, default: '' },   // e.g. "serif", "mono", "italic"
       }
     ],
     default: [],

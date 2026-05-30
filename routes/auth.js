@@ -45,10 +45,14 @@ router.post('/clerk', async (req, res) => {
     try {
       console.log('CLERK_SECRET_KEY prefix:', process.env.CLERK_SECRET_KEY?.substring(0, 10));
       const payload = await verifyToken(sessionToken, {
-        secretKey: process.env.CLERK_SECRET_KEY,
-        authorizedParties: [],
-      });
+  secretKey: process.env.CLERK_SECRET_KEY,
+  authorizedParties: [
+    "https://www.manage-sbkuchh.online",
+    "https://manage-sbkuchh.online"
+  ]
+});
       clerkUserId = payload.sub;
+      
     } catch (err) {
       console.error('Clerk verifyToken failed:', err.message);
       return res.status(401).json({ error: 'Invalid Clerk session token', detail: err.message });

@@ -1,6 +1,11 @@
 const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema({
+  clerkId: {
+    type: String,
+    sparse: true,
+    index: true,
+  },
   name: {
     type: String,
     required: true,
@@ -23,30 +28,23 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: '',
   },
+  familyKey: {
+    type: String,
+    default: '',
+    index: true,
+  },
   defaultView: {
     type: String,
-    default: 'expenses', // 'expenses', 'spaces', or specific spaceId
+    default: 'expenses',
   },
   telegramId: {
     type: String,
   },
   budgets: {
-    daily: {
-      type: Number,
-      default: 0,
-    },
-    monthly: {
-      type: Number,
-      default: 0,
-    },
-    categoryBudgets: {
-      type: Map,
-      of: Number,
-      default: {},
-    },
+    daily:   { type: Number, default: 0 },
+    monthly: { type: Number, default: 0 },
+    categoryBudgets: { type: Map, of: Number, default: {} },
   },
-}, {
-  timestamps: true,
-});
+}, { timestamps: true });
 
 module.exports = mongoose.model('User', userSchema);

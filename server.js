@@ -34,6 +34,8 @@ app.use('/api/schedule-events', require('./routes/scheduleEvents'));
 app.use('/api/notes', require('./routes/notes'));
 app.use('/api/drive', require('./routes/drive'));
 app.use('/api/words', require('./routes/words'));
+app.use('/api/family', require('./routes/family'));
+app.use('/api/family-posts', require('./routes/familyPosts'));
 
 // Health check
 app.get('/health', (req, res) => {

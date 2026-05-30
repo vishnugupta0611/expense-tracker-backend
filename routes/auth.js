@@ -46,6 +46,7 @@ router.post('/clerk', async (req, res) => {
       console.log('CLERK_SECRET_KEY prefix:', process.env.CLERK_SECRET_KEY?.substring(0, 10));
       const payload = await verifyToken(sessionToken, {
   secretKey: process.env.CLERK_SECRET_KEY,
+  jwtKey: process.env.CLERK_JWT_KEY, // supports offline local verification
   authorizedParties: [
     'http://localhost:3000', // for local dev (React standard)
     'http://localhost:5173', // for local dev (Vite)

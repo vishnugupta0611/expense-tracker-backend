@@ -47,9 +47,11 @@ router.post('/clerk', async (req, res) => {
       const payload = await verifyToken(sessionToken, {
   secretKey: process.env.CLERK_SECRET_KEY,
   authorizedParties: [
-    'http://localhost:3000', // for local dev
+    'http://localhost:3000', // for local dev (React standard)
+    'http://localhost:5173', // for local dev (Vite)
     'https://manage-sbkuchh.online',
-    'https://www.manage-sbkuchh.online/' // for prod
+    'https://www.manage-sbkuchh.online', // for prod (exact origin)
+    'https://www.manage-sbkuchh.online/' // for prod (fallback)
   ],
   clockSkewInMs: 10000
 });

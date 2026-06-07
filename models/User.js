@@ -40,6 +40,9 @@ const userSchema = new mongoose.Schema({
   telegramId: {
     type: String,
   },
+  fcmtoken: {
+    type: String,
+  },
   budgets: {
     daily:   { type: Number, default: 0 },
     monthly: { type: Number, default: 0 },

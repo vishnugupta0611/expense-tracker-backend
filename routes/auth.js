@@ -54,7 +54,7 @@ router.post('/clerk', async (req, res) => {
     'https://www.manage-sbkuchh.online', // for prod (exact origin)
     'https://www.manage-sbkuchh.online/' // for prod (fallback)
   ],
-  clockSkewInMs: 10000
+  clockSkewInMs: 15000
 });
       clerkUserId = payload.sub;
 

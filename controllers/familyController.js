@@ -8,6 +8,7 @@ const createFamilyKey = () => `family_${crypto.randomBytes(6).toString('hex')}`;
 
 const createFamilyLink = async (req, res) => {
   try {
+    console.log("hello")
     const { name } = req.body;
 
     if (req.user.familyKey) {
@@ -106,7 +107,32 @@ const addPersonToFamily = async (req, res) => {
   }
 };
 
+const getFamilyMembers = async (req, res) => {
+  try {
+    const { familyKey } = req.params;
+
+    if (!familyKey) {
+      return res.status(400).json({ error: 'Family key is required' });
+    }
+
+    const family = await Family.findOne({ familyKey }).populate('members', 'name email avatar');
+
+    if (!family) {
+      return res.status(404).json({ error: 'Family not found' });
+    }
+
+    res.json({
+      familyKey,
+      members: family.members || [],
+    });
+  } catch (error) {
+    console.error('Get family members error:', error);
+    res.status(500).json({ error: 'Failed to get family members' });
+  }
+};
+
 module.exports = {
   createFamilyLink,
   addPersonToFamily,
+  getFamilyMembers,
 };

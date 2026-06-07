@@ -39,8 +39,14 @@ const familyPostSchema = new mongoose.Schema({
     required: true,
     trim: true,
   },
-  image: {
+  //image will be an array of strings (URLs) to support multiple images per post
+  frameType: {
     type: String,
+    enum: ['square', 'portrait', 'fit'],
+    default: 'square',
+  },
+  image: {
+    type: [String],
     required: true,
   },
   familyKey: {

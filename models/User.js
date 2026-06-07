@@ -35,7 +35,7 @@ const userSchema = new mongoose.Schema({
   },
   defaultView: {
     type: String,
-    default: 'expenses',
+    default: 'family',
   },
   telegramId: {
     type: String,

@@ -150,9 +150,22 @@ const createFamilyPost = async (req, res) => {
     await post.save();
     await post.populate('userId', 'name email avatar');
 
-    // Send notifications to all family members
+    // Send notifications to all family members (including self for post confirmation)
     try {
-      const familyMembers = await User.find({ familyKey }).select('fcmtoken');
+      const familyMembers = await User.find({ familyKey }).select('fcmtoken _id');
+      const posterToken = familyMembers.find(m => m._id.toString() === req.userId.toString())?.fcmtoken;
+
+      // Self notification — "post posted successfully"
+      if (posterToken) {
+        sendFCMNotification(
+          posterToken,
+          '✅ Post shared!',
+          'Your post was posted successfully',
+          uploadedMedia[0]
+        );
+      }
+
+      // Notify other family members
       familyMembers.forEach((member) => {
         if (member.fcmtoken && member._id.toString() !== req.userId.toString()) {
           sendFCMNotification(

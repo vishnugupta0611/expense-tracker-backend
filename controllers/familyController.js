@@ -63,6 +63,8 @@ const addPersonToFamily = async (req, res) => {
     const { username } = req.body;
     const { familyKey } = req.params;
 
+    console.log(username, familyKey)
+     
     if (!username) {
       return res.status(400).json({ error: 'Username is required' });
     }
@@ -77,7 +79,7 @@ const addPersonToFamily = async (req, res) => {
       return res.status(403).json({ error: 'Only family creator can add members' });
     }
 
-    const userToAdd = await User.findOne({ email: buildUsernameEmail(username) });
+    const userToAdd = await User.findOne({ email: username });
 
     if (!userToAdd) {
       return res.status(404).json({ error: 'User not found with this username' });

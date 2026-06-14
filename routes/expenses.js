@@ -4,6 +4,103 @@ const auth = require('../middleware/auth');
 const Expense = require('../models/Expense');
 const User = require('../models/User');
 const Wallet = require('../models/Wallet');
+const https = require('https');
+
+// ── Gemini helper (same pattern as notes.js / words.js) ──────────────────────
+const gemini = (prompt) => new Promise((resolve, reject) => {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return reject(new Error('GEMINI_API_KEY is not defined'));
+
+  const body = JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] });
+  const options = {
+    hostname: 'generativelanguage.googleapis.com',
+    path: `/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${key}`,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+  };
+
+  const req = https.request(options, (res) => {
+    let data = '';
+    res.on('data', (chunk) => { data += chunk; });
+    res.on('end', () => {
+      try {
+        const parsed = JSON.parse(data);
+        const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) resolve(text);
+        else reject(new Error(parsed.error?.message || 'No response from Gemini'));
+      } catch (e) { reject(e); }
+    });
+  });
+  req.on('error', reject);
+  req.write(body);
+  req.end();
+});
+
+// @route   POST /api/expenses/voice
+// @desc    Parse voice transcript with AI → save one or multiple expenses
+// @access  Private
+router.post('/voice', auth, async (req, res) => {
+  try {
+    const { transcript } = req.body;
+    if (!transcript) return res.status(400).json({ error: 'Transcript is required' });
+
+    const prompt = `Extract one or more expense items from this voice input (may be Hindi, English, or Hinglish):
+"${transcript}"
+
+Respond ONLY with valid JSON array, no markdown, no explanation:
+[{"amount": <number>, "category": "<Food|Transport|Bills|Grocery|Entertainment|Other>", "description": "<short English description max 50 chars>"}]
+
+Rules:
+- Each item in the array is a separate expense
+- amount must be a positive number
+- If a single expense is mentioned, still return an array with one item
+- category must be exactly one of the given options`;
+
+    const raw = await gemini(prompt);
+
+    let items;
+    try {
+      const clean = raw.replace(/```json?/gi, '').replace(/```/g, '').trim();
+      const jsonMatch = clean.match(/\[[\s\S]*\]/);
+      items = JSON.parse(jsonMatch ? jsonMatch[0] : clean);
+      if (!Array.isArray(items)) items = [items];
+    } catch {
+      return res.status(422).json({ error: 'AI could not parse the expense. Try again.' });
+    }
+
+    // Filter out items with no valid amount
+    const validItems = items.filter(i => i.amount && i.amount > 0);
+    if (validItems.length === 0) {
+      return res.status(422).json({ error: 'Could not detect any amounts. Please try again.' });
+    }
+
+    // Save all expenses and deduct from wallet
+    const savedExpenses = await Promise.all(
+      validItems.map(async (item) => {
+        const expense = new Expense({
+          userId: req.userId,
+          amount: parseFloat(item.amount),
+          category: item.category || 'Other',
+          description: item.description || transcript.slice(0, 50),
+          date: new Date(),
+        });
+        await expense.save();
+        return expense;
+      })
+    );
+
+    const totalAmount = validItems.reduce((sum, i) => sum + parseFloat(i.amount), 0);
+    await Wallet.findOneAndUpdate(
+      { userId: req.userId },
+      { $inc: { balance: -totalAmount } }
+    );
+
+    res.status(201).json({ expenses: savedExpenses });
+  } catch (error) {
+    console.error('Voice expense error:', error);
+    res.status(500).json({ error: 'Failed to process voice expense' });
+  }
+});
 
 // @route   POST /api/expenses
 

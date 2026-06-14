@@ -2,6 +2,47 @@ const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
 const auth = require('../middleware/auth');
+const upload = require('../middleware/upload');
+const cloudinary = require('cloudinary').v2;
+const streamifier = require('streamifier');
+
+// @route   POST /api/users/upload-avatar
+// @desc    Upload avatar image to Cloudinary and save URL
+// @access  Private
+router.post('/upload-avatar', auth, upload.single('avatar'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    cloudinary.config({
+      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+      api_key: process.env.CLOUDINARY_API_KEY,
+      api_secret: process.env.CLOUDINARY_API_SECRET,
+      secure: true,
+    });
+
+    const avatarUrl = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        { folder: 'avatars', resource_type: 'image', transformation: [{ width: 400, height: 400, crop: 'fill', gravity: 'face' }] },
+        (error, result) => {
+          if (error) return reject(error);
+          resolve(result.secure_url);
+        }
+      );
+      streamifier.createReadStream(req.file.buffer).pipe(stream);
+    });
+
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      { $set: { avatar: avatarUrl } },
+      { new: true }
+    ).select('-password -googleId');
+
+    res.json({ avatar: avatarUrl, user });
+  } catch (error) {
+    console.error('Avatar upload error:', error);
+    res.status(500).json({ error: 'Failed to upload avatar' });
+  }
+});
 
 // @route   PUT /api/users/profile
 // @desc    Update user profile & settings

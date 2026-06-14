@@ -4,6 +4,37 @@ const auth = require('../middleware/auth');
 const Space = require('../models/Space');
 const SpaceExpense = require('../models/SpaceExpense');
 const User = require('../models/User');
+const https = require('https');
+
+// ── Gemini helper ────────────────────────────────────────────────────────────
+const gemini = (prompt) => new Promise((resolve, reject) => {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return reject(new Error('GEMINI_API_KEY is not defined'));
+
+  const body = JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] });
+  const options = {
+    hostname: 'generativelanguage.googleapis.com',
+    path: `/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${key}`,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+  };
+
+  const req = https.request(options, (res) => {
+    let data = '';
+    res.on('data', (chunk) => { data += chunk; });
+    res.on('end', () => {
+      try {
+        const parsed = JSON.parse(data);
+        const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) resolve(text);
+        else reject(new Error(parsed.error?.message || 'No response from Gemini'));
+      } catch (e) { reject(e); }
+    });
+  });
+  req.on('error', reject);
+  req.write(body);
+  req.end();
+});
 
 // @route   GET /api/spaces
 // @desc    Get all user spaces
@@ -113,6 +144,77 @@ router.post('/:id/expenses', auth, async (req, res) => {
   } catch (error) {
     console.error('Add space expense error:', error);
     res.status(500).json({ error: 'Failed to add space expense' });
+  }
+});
+
+// @route   POST /api/spaces/:id/expenses/voice
+// @desc    Add space expense by voice transcript
+// @access  Private
+router.post('/:id/expenses/voice', auth, async (req, res) => {
+  try {
+    const { transcript } = req.body;
+    if (!transcript) return res.status(400).json({ error: 'Transcript is required' });
+
+    const space = await Space.findOne({ _id: req.params.id, members: req.userId });
+    if (!space) {
+      return res.status(404).json({ error: 'Space not found' });
+    }
+
+    const prompt = `Extract one or more expense items from this voice input (may be Hindi, English, or Hinglish):
+"${transcript}"
+
+Respond ONLY with valid JSON array, no markdown, no explanation:
+[{"amount": <number>, "category": "<Food|Transport|Bills|Grocery|Entertainment|Other>", "description": "<short English description max 50 chars>"}]
+
+Rules:
+- Each item in the array is a separate expense
+- amount must be a positive number
+- If a single expense is mentioned, still return an array with one item
+- category must be exactly one of the given options`;
+
+    const raw = await gemini(prompt);
+
+    let items;
+    try {
+      const clean = raw.replace(/```json?/gi, '').replace(/```/g, '').trim();
+      const jsonMatch = clean.match(/\[[\s\S]*\]/);
+      items = JSON.parse(jsonMatch ? jsonMatch[0] : clean);
+      if (!Array.isArray(items)) items = [items];
+    } catch {
+      return res.status(422).json({ error: 'AI could not parse the expense. Try again.' });
+    }
+
+    // Filter out items with no valid amount
+    const validItems = items.filter(i => i.amount && i.amount > 0);
+    if (validItems.length === 0) {
+      return res.status(422).json({ error: 'Could not detect any amounts. Please try again.' });
+    }
+
+    // Save all expenses for this space split among all members
+    const savedExpenses = await Promise.all(
+      validItems.map(async (item) => {
+        const expense = new SpaceExpense({
+          spaceId: req.params.id,
+          paidBy: req.userId,
+          splitBetween: space.members,
+          amount: parseFloat(item.amount),
+          category: item.category || 'Other',
+          description: item.description || transcript.slice(0, 50),
+          date: new Date(),
+        });
+        await expense.save();
+        return expense;
+      })
+    );
+
+    const populatedExpenses = await Promise.all(
+      savedExpenses.map(e => e.populate('paidBy splitBetween', 'name email avatar'))
+    );
+
+    res.status(201).json({ expenses: populatedExpenses });
+  } catch (error) {
+    console.error('Voice space expense error:', error);
+    res.status(500).json({ error: 'Failed to process voice space expense' });
   }
 });
 
@@ -365,6 +467,31 @@ router.post('/:id/members', auth, async (req, res) => {
   } catch (error) {
     console.error('Add members error:', error);
     res.status(500).json({ error: 'Failed to add members' });
+  }
+});
+
+// @route   DELETE /api/spaces/:id
+// @desc    Delete a space and all related space expenses
+// @access  Private
+router.delete('/:id', auth, async (req, res) => {
+  try {
+    const space = await Space.findOne({ _id: req.params.id, createdBy: req.userId });
+
+    if (!space) {
+      return res.status(404).json({ error: 'Space not found or unauthorized' });
+    }
+
+    const expensesResult = await SpaceExpense.deleteMany({ spaceId: req.params.id });
+    await Space.deleteOne({ _id: req.params.id });
+
+    res.json({
+      message: 'Space deleted',
+      deletedSpaceId: req.params.id,
+      deletedExpenses: expensesResult.deletedCount || 0,
+    });
+  } catch (error) {
+    console.error('Delete space error:', error);
+    res.status(500).json({ error: 'Failed to delete space' });
   }
 });
 

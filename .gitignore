@@ -3,3 +3,6 @@ node_modules/
 .DS_Store
 *.log
 firebase-admin.json
+.wwebjs_auth/
+.wwebjs_cache/
+*.stackdump

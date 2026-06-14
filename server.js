@@ -45,6 +45,13 @@ app.use('/api/drive', require('./routes/drive'));
 app.use('/api/words', require('./routes/words'));
 app.use('/api/family', require('./routes/family'));
 app.use('/api/family-posts', require('./routes/familyPosts'));
+app.use('/api/jobs', require('./routes/jobs'));
+
+// Initialize Job Board Services
+const { initWhatsApp } = require('./services/whatsappService');
+const { startCron } = require('./services/cronService');
+initWhatsApp();
+startCron();
 
 // Health check
 app.get('/health', (req, res) => {

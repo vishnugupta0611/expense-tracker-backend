@@ -1,10 +1,14 @@
-const { Redis } = require("@upstash/redis");
-require("dotenv").config();
-let UPSTASH_REDIS_REST_URL="https://upright-grackle-141031.upstash.io"
-let UPSTASH_REDIS_REST_TOKEN="gQAAAAAAAibnAAIgcDJiMmQzYmIwMDc0YTc0YTUzODE1ZTYxOGJlMjlhYzFiYg"
-const redis = new Redis({
-  url: UPSTASH_REDIS_REST_URL,
-  token: UPSTASH_REDIS_REST_TOKEN,
-});
+// Redis / Upstash temporarily disabled
+// Uncomment and set UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN in .env to re-enable
 
-module.exports = redis;
+// const { Redis } = require("@upstash/redis");
+// require("dotenv").config();
+//
+// const redis = new Redis({
+//   url: process.env.UPSTASH_REDIS_REST_URL,
+//   token: process.env.UPSTASH_REDIS_REST_TOKEN,
+// });
+//
+// module.exports = redis;
+
+module.exports = null;

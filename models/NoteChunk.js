@@ -5,6 +5,10 @@ const blockSchema = new mongoose.Schema({
   content:   { type: String, default: '' },
   color:     { type: String, default: '' },
   fontStyle: { type: String, default: '' },
+  position:  { type: String },
+  size:      { type: String },
+  caption:   { type: String },
+  alt:       { type: String },
 }, { _id: false });
 
 // One chunk = up to ~4000 chars of block content

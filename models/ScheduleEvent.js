@@ -17,7 +17,7 @@ const scheduleEventSchema = new mongoose.Schema({
   category: {
     type: String,
     required: true,
-    enum: ['work', 'health', 'shopping', 'study', 'personal'],
+    enum: ['work', 'health', 'shopping', 'study', 'personal', 'fitness', 'family', 'routine'],
     default: 'personal',
   },
   days: {

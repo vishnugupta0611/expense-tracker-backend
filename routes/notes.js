@@ -177,9 +177,19 @@ router.get('/public/:id/chunks', async (req, res) => {
 // GET /api/notes — list (no blocks, just metadata)
 router.get('/', auth, async (req, res) => {
   try {
-    const notes = await Note.find({ userId: req.userId })
-      .select('title updatedAt createdAt')
-      .sort({ updatedAt: -1 })
+    const { categoryId, search, project, tag } = req.query;
+    const filter = { userId: req.userId };
+    if (categoryId) filter.categoryId = categoryId;
+    if (project) filter.project = project;
+    if (tag) filter.tags = tag;
+    if (search) {
+      filter.$text = { $search: search };
+    }
+
+    const notes = await Note.find(filter)
+      .select('title categoryId summary project tags sourceProvider sourceUrl personalNotes updatedAt createdAt')
+      .populate('categoryId', 'name isDefault')
+      .sort(search ? { score: { $meta: 'textScore' } } : { updatedAt: -1 })
       .lean();
     res.json({ notes });
   } catch (e) {
@@ -208,10 +218,12 @@ router.get('/:id/chunks', auth, async (req, res) => {
   }
 });
 
-// GET /api/notes/:id — note metadata + first 3 chunks
+// GET /api/notes/:id — note metadata + chunks (first chunks by default, or all chunks when ?full=1)
 router.get('/:id', auth, async (req, res) => {
   try {
-    const note = await Note.findOne({ _id: req.params.id, userId: req.userId }).lean();
+    const note = await Note.findOne({ _id: req.params.id, userId: req.userId })
+      .populate('categoryId', 'name isDefault')
+      .lean();
     if (!note) return res.status(404).json({ error: 'Note not found' });
 
     // Migrate old note formats on the fly
@@ -221,7 +233,14 @@ router.get('/:id', auth, async (req, res) => {
       note.blocks = undefined;
     }
 
-    const chunks = await NoteChunk.find({ noteId: note._id, seq: { $lt: 2 } })
+    const isFull = req.query.full === '1' || req.query.full === 'true' || req.query.mode === 'full';
+
+    const chunkQuery = { noteId: note._id };
+    if (!isFull) {
+      chunkQuery.seq = { $lt: 2 };
+    }
+
+    const chunks = await NoteChunk.find(chunkQuery)
       .sort({ seq: 1 })
       .lean();
     const blocks = chunks.flatMap(c => c.blocks);
@@ -237,10 +256,39 @@ router.get('/:id', auth, async (req, res) => {
 // POST /api/notes — create
 router.post('/', auth, async (req, res) => {
   try {
-    const note = await Note.create({ userId: req.userId, title: 'Untitled' });
-    // seed one empty chunk
-    await NoteChunk.create({ noteId: note._id, seq: 0, blocks: [], charCount: 0 });
-    res.status(201).json({ note: { ...note.toObject(), blocks: [] } });
+    const {
+      title,
+      categoryId,
+      summary,
+      project,
+      tags,
+      sourceProvider,
+      sourceUrl,
+      personalNotes,
+      blocks,
+    } = req.body || {};
+
+    const note = await Note.create({
+      userId: req.userId,
+      title: title || 'Untitled',
+      categoryId: categoryId || null,
+      summary: summary || '',
+      project: project || '',
+      tags: Array.isArray(tags) ? tags : [],
+      sourceProvider: sourceProvider || '',
+      sourceUrl: sourceUrl || '',
+      personalNotes: personalNotes || '',
+    });
+
+    if (Array.isArray(blocks) && blocks.length > 0) {
+      await saveChunks(note._id, blocks);
+    } else {
+      // seed one empty chunk
+      await NoteChunk.create({ noteId: note._id, seq: 0, blocks: [], charCount: 0 });
+    }
+
+    const allBlocks = await loadBlocks(note._id);
+    res.status(201).json({ note: { ...note.toObject(), blocks: allBlocks } });
   } catch (e) {
     res.status(500).json({ error: 'Failed to create note', detail: e.message });
   }
@@ -250,12 +298,28 @@ router.post('/', auth, async (req, res) => {
 // NOTE: must be defined BEFORE /:id to avoid route conflict
 router.patch('/:id/chunks', auth, async (req, res) => {
   try {
-    const { title, dirty, deleteFrom } = req.body;
-    // dirty: [{seq, blocks}] — only changed/new chunks
-    // deleteFrom: number — delete all chunks with seq >= this value
+    const {
+      title,
+      categoryId,
+      summary,
+      project,
+      tags,
+      sourceProvider,
+      sourceUrl,
+      personalNotes,
+      dirty,
+      deleteFrom,
+    } = req.body;
 
     const update = { updatedAt: new Date() };
     if (title !== undefined) update.title = title;
+    if (categoryId !== undefined) update.categoryId = categoryId || null;
+    if (summary !== undefined) update.summary = summary;
+    if (project !== undefined) update.project = project;
+    if (tags !== undefined) update.tags = Array.isArray(tags) ? tags : [];
+    if (sourceProvider !== undefined) update.sourceProvider = sourceProvider;
+    if (sourceUrl !== undefined) update.sourceUrl = sourceUrl;
+    if (personalNotes !== undefined) update.personalNotes = personalNotes;
 
     const note = await Note.findOneAndUpdate(
       { _id: req.params.id, userId: req.userId },
@@ -291,12 +355,30 @@ router.patch('/:id/chunks', auth, async (req, res) => {
   }
 });
 
-// PATCH /api/notes/:id — autosave (title + blocks, chunked)
+// PATCH /api/notes/:id — autosave (title + metadata + blocks, chunked)
 router.patch('/:id', auth, async (req, res) => {
   try {
-    const { title, blocks } = req.body;
+    const {
+      title,
+      categoryId,
+      summary,
+      project,
+      tags,
+      sourceProvider,
+      sourceUrl,
+      personalNotes,
+      blocks,
+    } = req.body;
+
     const update = { updatedAt: new Date() };
     if (title !== undefined) update.title = title;
+    if (categoryId !== undefined) update.categoryId = categoryId || null;
+    if (summary !== undefined) update.summary = summary;
+    if (project !== undefined) update.project = project;
+    if (tags !== undefined) update.tags = Array.isArray(tags) ? tags : [];
+    if (sourceProvider !== undefined) update.sourceProvider = sourceProvider;
+    if (sourceUrl !== undefined) update.sourceUrl = sourceUrl;
+    if (personalNotes !== undefined) update.personalNotes = personalNotes;
 
     const note = await Note.findOneAndUpdate(
       { _id: req.params.id, userId: req.userId },
@@ -316,10 +398,31 @@ router.patch('/:id', auth, async (req, res) => {
 // PUT /api/notes/:id — full overwrite (backward compat)
 router.put('/:id', auth, async (req, res) => {
   try {
-    const { title, blocks } = req.body;
+    const {
+      title,
+      categoryId,
+      summary,
+      project,
+      tags,
+      sourceProvider,
+      sourceUrl,
+      personalNotes,
+      blocks,
+    } = req.body;
+
+    const update = { updatedAt: new Date() };
+    if (title !== undefined) update.title = title;
+    if (categoryId !== undefined) update.categoryId = categoryId || null;
+    if (summary !== undefined) update.summary = summary;
+    if (project !== undefined) update.project = project;
+    if (tags !== undefined) update.tags = Array.isArray(tags) ? tags : [];
+    if (sourceProvider !== undefined) update.sourceProvider = sourceProvider;
+    if (sourceUrl !== undefined) update.sourceUrl = sourceUrl;
+    if (personalNotes !== undefined) update.personalNotes = personalNotes;
+
     const note = await Note.findOneAndUpdate(
       { _id: req.params.id, userId: req.userId },
-      { $set: { title, updatedAt: new Date() } },
+      { $set: update },
       { new: true }
     );
     if (!note) return res.status(404).json({ error: 'Note not found' });

@@ -46,6 +46,7 @@ app.use('/api/words', require('./routes/words'));
 app.use('/api/family', require('./routes/family'));
 app.use('/api/family-posts', require('./routes/familyPosts'));
 app.use('/api/jobs', require('./routes/jobs'));
+app.use('/api/telegram-bot', require('./routes/telegram_bot'));
 
 // Initialize Job Board Services
 const { initWhatsApp } = require('./services/whatsappService');
@@ -69,3 +70,4 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+

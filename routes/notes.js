@@ -141,12 +141,11 @@ router.get('/public/:id', async (req, res) => {
       note.blocks = undefined;
     }
 
-    const chunks = await NoteChunk.find({ noteId: note._id, seq: { $lt: 2 } })
+    const chunks = await NoteChunk.find({ noteId: note._id })
       .sort({ seq: 1 })
       .lean();
     const blocks = chunks.flatMap(c => c.blocks);
-    const totalChunks = await NoteChunk.countDocuments({ noteId: note._id });
-    res.json({ note: { ...note, blocks, totalChunks } });
+    res.json({ note: { ...note, blocks, totalChunks: chunks.length } });
   } catch (e) {
     res.status(500).json({ error: 'Failed to fetch note' });
   }
@@ -233,21 +232,13 @@ router.get('/:id', auth, async (req, res) => {
       note.blocks = undefined;
     }
 
-    const isFull = req.query.full === '1' || req.query.full === 'true' || req.query.mode === 'full';
-
-    const chunkQuery = { noteId: note._id };
-    if (!isFull) {
-      chunkQuery.seq = { $lt: 2 };
-    }
-
-    const chunks = await NoteChunk.find(chunkQuery)
+    // Load all chunks so complete note is loaded immediately without glitches or missing blocks
+    const chunks = await NoteChunk.find({ noteId: note._id })
       .sort({ seq: 1 })
       .lean();
     const blocks = chunks.flatMap(c => c.blocks);
 
-    const totalChunks = await NoteChunk.countDocuments({ noteId: note._id });
-
-    res.json({ note: { ...note, blocks, totalChunks } });
+    res.json({ note: { ...note, blocks, totalChunks: chunks.length } });
   } catch (e) {
     res.status(500).json({ error: 'Failed to fetch note' });
   }

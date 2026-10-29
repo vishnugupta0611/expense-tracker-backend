@@ -4,34 +4,12 @@ const auth    = require('../middleware/auth');
 const Category = require('../models/Category');
 const Note     = require('../models/Note');
 
-// ── Default categories for Notes / Knowledge ─────────────────────────────────
-const DEFAULT_CATEGORIES = [
-  'Project Knowledge',
-  'Learnings',
-  'Ideas',
-  'AI Sharing',
-  'Implementation',
-];
-
-// Ensure the 5 default categories exist for this user (idempotent)
-async function seedDefaultCategories(userId) {
-  const ops = DEFAULT_CATEGORIES.map(name => ({
-    updateOne: {
-      filter: { userId, name },
-      update: { $setOnInsert: { userId, name, isDefault: true } },
-      upsert: true,
-    },
-  }));
-  await Category.bulkWrite(ops);
-}
-
 // @route   GET /api/categories
-// @desc    Get all categories (default + custom). Seeds defaults on first call.
+// @desc    Get all user-created categories
 // @access  Private
 router.get('/', auth, async (req, res) => {
   try {
-    await seedDefaultCategories(req.userId);
-    const categories = await Category.find({ userId: req.userId }).sort({ isDefault: -1, name: 1 });
+    const categories = await Category.find({ userId: req.userId }).sort({ name: 1 });
     res.json({ categories });
   } catch (error) {
     console.error('Get categories error:', error);
@@ -50,7 +28,7 @@ router.post('/', auth, async (req, res) => {
     }
 
     const trimmed = name.trim();
-    // Check if category already exists (case-insensitive for safety)
+    // Check if category already exists for this user (case-insensitive)
     const existingCategory = await Category.findOne({
       userId: req.userId,
       name: { $regex: new RegExp(`^${trimmed}$`, 'i') },
@@ -74,7 +52,7 @@ router.post('/', auth, async (req, res) => {
 });
 
 // @route   PATCH /api/categories/:id
-// @desc    Rename a custom category (isDefault categories cannot be renamed)
+// @desc    Rename category
 // @access  Private
 router.patch('/:id', auth, async (req, res) => {
   try {
@@ -89,11 +67,6 @@ router.patch('/:id', auth, async (req, res) => {
       return res.status(404).json({ error: 'Category not found' });
     }
 
-    if (category.isDefault) {
-      return res.status(400).json({ error: 'Cannot rename default categories' });
-    }
-
-    // Check duplicate name
     const duplicate = await Category.findOne({
       userId: req.userId,
       _id: { $ne: category._id },
@@ -114,7 +87,7 @@ router.patch('/:id', auth, async (req, res) => {
 });
 
 // @route   DELETE /api/categories/:id
-// @desc    Delete a custom category — associated notes are preserved (categoryId unassigned)
+// @desc    Delete category — associated notes remain preserved (categoryId unassigned)
 // @access  Private
 router.delete('/:id', auth, async (req, res) => {
   try {
@@ -123,12 +96,7 @@ router.delete('/:id', auth, async (req, res) => {
       return res.status(404).json({ error: 'Category not found' });
     }
 
-    if (category.isDefault) {
-      return res.status(400).json({ error: 'Cannot delete default categories' });
-    }
-
-    // Category delete hone par associated notes delete nahi hone chahiye:
-    // Unassign category from associated notes while keeping all note data intact
+    // Associated notes are never deleted:
     await Note.updateMany(
       { categoryId: category._id, userId: req.userId },
       { $set: { categoryId: null } }

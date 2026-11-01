@@ -64,5 +64,25 @@
     "filePath": "photos/file_6.jpg",
     "url": "https://api.telegram.org/file/botundefined/photos/file_6.jpg",
     "date": 1782934579
+  },
+  {
+    "messageId": 117,
+    "fileId": "AgACAgUAAyEGAAMBBKDTRAADdWrnJ97sxpK3sSWvU8PsDdWrVm4iAAJUF2sb7dc4V12w6uFAAxQyAQADAgADeAADPQQ",
+    "fileName": "ChatGPT Image Oct 25, 2026, 12_10_53 AM.png",
+    "mimeType": "image/png",
+    "fileSize": 43526,
+    "filePath": "photos/file_1.jpg",
+    "url": "https://api.telegram.org/file/bot8673342759:AAHnr4yK7SxP_8Be8fNL_pSogjgQBJvQN4Y/photos/file_1.jpg",
+    "date": 1793533918
+  },
+  {
+    "messageId": 118,
+    "fileId": "AgACAgUAAyEGAAMBBKDTRAADdmrnKDwH31EnuLRUNtbcF3jojjNZAAJVF2sb7dc4V09CJcygxdg7AQADAgADbQADPQQ",
+    "fileName": "ChatGPT Image Oct 25, 2026, 12_10_34 AM.png",
+    "mimeType": "image/png",
+    "fileSize": 13551,
+    "filePath": "photos/file_2.jpg",
+    "url": "https://api.telegram.org/file/bot8673342759:AAHnr4yK7SxP_8Be8fNL_pSogjgQBJvQN4Y/photos/file_2.jpg",
+    "date": 1793534012
   }
 ]

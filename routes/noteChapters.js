@@ -379,6 +379,22 @@ router.get('/:chapterId/content', async (req, res) => {
     }).lean();
     if (!chapter) return res.status(404).json({ error: 'Chapter not found' });
 
+    const staleLockBefore = new Date(Date.now() - 5 * 60 * 1000);
+    if (chapter.writeLock && (!chapter.writeLockAt || chapter.writeLockAt < staleLockBefore)) {
+      await Chapter.updateOne(
+        { _id: chapter._id, revision: chapter.revision, writeLock: true },
+        { $set: { writeLock: false, writeLockAt: null } }
+      );
+      chapter.writeLock = false;
+    }
+    if (chapter.writeLock) {
+      return res.status(409).json({
+        error: 'Chapter save is still in progress. Retry shortly.',
+        saving: true,
+        revision: chapter.revision || 0,
+      });
+    }
+
     const chunks = await NoteChunk.find({
       noteId: note._id,
       chapterId: chapter._id,
@@ -424,6 +440,8 @@ router.get('/:chapterId/content', async (req, res) => {
 
 // PUT /api/notes/:noteId/chapters/:chapterId/content
 router.put('/:chapterId/content', async (req, res) => {
+  let lockedChapterId = null;
+  let lockedRevision = null;
   try {
     const note = await findOwnedNote(req);
     if (!note) return res.status(404).json({ error: 'Note not found' });
@@ -456,13 +474,21 @@ router.put('/:chapterId/content', async (req, res) => {
 
     // Claim this revision atomically before writing chunks. Two saves based on
     // the same revision cannot both proceed and silently overwrite one another.
+    const staleLockBefore = new Date(Date.now() - 5 * 60 * 1000);
     const revisionClaim = await Chapter.findOneAndUpdate(
       {
         _id: chapter._id,
         noteId: note._id,
         revision: expectedRevision,
+        $or: [
+          { writeLock: { $ne: true } },
+          { writeLockAt: { $lt: staleLockBefore } },
+        ],
       },
-      { $inc: { revision: 1 } },
+      {
+        $inc: { revision: 1 },
+        $set: { writeLock: true, writeLockAt: new Date() },
+      },
       { new: true, projection: { revision: 1 } }
     ).lean();
 
@@ -470,15 +496,20 @@ router.put('/:chapterId/content', async (req, res) => {
       const latestChapter = await Chapter.findOne({
         _id: chapter._id,
         noteId: note._id,
-      }).select('revision').lean();
+      }).select('revision writeLock').lean();
 
       return res.status(409).json({
-        error: 'Chapter has changed since it was loaded',
+        error: latestChapter?.writeLock
+          ? 'Chapter is currently being saved'
+          : 'Chapter has changed since it was loaded',
+        saving: latestChapter?.writeLock === true,
         revision: latestChapter?.revision || 0,
       });
     }
 
     const savedRevision = revisionClaim.revision;
+    lockedChapterId = chapter._id;
+    lockedRevision = savedRevision;
     const normalizedNodes = sanitizedDocument.content.length ? sanitizedDocument.content : [{ type: 'paragraph' }];
     const groups = splitDocumentNodes(normalizedNodes);
     const oldChunks = await NoteChunk.find({
@@ -538,6 +569,15 @@ router.put('/:chapterId/content', async (req, res) => {
     }
 
     await Note.updateOne({ _id: note._id }, { $set: { updatedAt: new Date() } });
+    const released = await Chapter.updateOne(
+      { _id: chapter._id, revision: savedRevision, writeLock: true },
+      { $set: { writeLock: false, writeLockAt: null } }
+    );
+    if (released.matchedCount !== 1) {
+      throw new Error('Chapter save lock was lost before completion');
+    }
+    lockedChapterId = null;
+    lockedRevision = null;
 
     res.json({
       success: true,
@@ -548,6 +588,16 @@ router.put('/:chapterId/content', async (req, res) => {
       deletedChunks: obsoleteSeqs.length,
     });
   } catch (error) {
+    if (lockedChapterId && lockedRevision !== null) {
+      try {
+        await Chapter.updateOne(
+          { _id: lockedChapterId, revision: lockedRevision, writeLock: true },
+          { $set: { writeLock: false, writeLockAt: null } }
+        );
+      } catch (releaseError) {
+        console.error('Could not release chapter save lock:', releaseError);
+      }
+    }
     console.error('Save chapter content error:', error);
     res.status(500).json({ error: 'Failed to save chapter content' });
   }

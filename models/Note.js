@@ -15,6 +15,8 @@ const noteSchema = new mongoose.Schema({
 
   createdAt:      { type: Date, default: Date.now },
   updatedAt:      { type: Date, default: Date.now },
+  // Monotonic note-wide sequence allocator for chapter chunks.
+  chunkSeqCounter: { type: Number, default: -1 },
 });
 
 // Indexes for fast category filtering, tag search, and text search

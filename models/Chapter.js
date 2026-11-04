@@ -29,6 +29,16 @@ const chapterSchema = new mongoose.Schema({
     type: Number,
     default: 0,
   },
+  // Short-lived write lock prevents a second editor from reading a new
+  // revision while the corresponding chunk write is still in progress.
+  writeLock: {
+    type: Boolean,
+    default: false,
+  },
+  writeLockAt: {
+    type: Date,
+    default: null,
+  },
 }, {
   timestamps: true,
 });

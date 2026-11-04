@@ -8,6 +8,7 @@ const NoteChunk = require('../models/NoteChunk');
 const router = express.Router({ mergeParams: true });
 const TARGET_CHUNK_SIZE = 12000;
 const FORMAT_VERSION = 1;
+const WRITE_LOCK_TIMEOUT_MS = 15 * 60 * 1000;
 
 async function findOwnedNote(req) {
   if (!mongoose.isValidObjectId(req.params.noteId)) return null;
@@ -270,6 +271,30 @@ function getChunkCharCount(nodes) {
   return nodes.reduce((sum, node) => sum + textLength(node), 0);
 }
 
+async function reserveChunkSequences(noteId, count, latestSequence) {
+  if (count <= 0) return null;
+
+  // The counter lives on the note, so separate chapter saves cannot allocate
+  // the same note-wide sequence values at the same time.
+  const updatedNote = await Note.findOneAndUpdate(
+    { _id: noteId },
+    [{
+      $set: {
+        chunkSeqCounter: {
+          $add: [
+            { $max: [{ $ifNull: ['$chunkSeqCounter', -1] }, latestSequence] },
+            count,
+          ],
+        },
+      },
+    }],
+    { new: true, projection: { chunkSeqCounter: 1 } }
+  ).lean();
+
+  if (!updatedNote) throw new Error('Could not reserve chapter chunk sequence values');
+  return updatedNote.chunkSeqCounter - count + 1;
+}
+
 router.use(auth);
 
 // GET /api/notes/:noteId/chapters
@@ -379,12 +404,33 @@ router.get('/:chapterId/content', async (req, res) => {
     }).lean();
     if (!chapter) return res.status(404).json({ error: 'Chapter not found' });
 
-    const staleLockBefore = new Date(Date.now() - 5 * 60 * 1000);
+    const staleLockBefore = new Date(Date.now() - WRITE_LOCK_TIMEOUT_MS);
     if (chapter.writeLock && (!chapter.writeLockAt || chapter.writeLockAt < staleLockBefore)) {
-      await Chapter.updateOne(
-        { _id: chapter._id, revision: chapter.revision, writeLock: true },
-        { $set: { writeLock: false, writeLockAt: null } }
-      );
+      const unlockedChapter = await Chapter.findOneAndUpdate(
+        {
+          _id: chapter._id,
+          noteId: note._id,
+          revision: chapter.revision,
+          writeLock: true,
+          $or: [
+            { writeLockAt: { $lt: staleLockBefore } },
+            { writeLockAt: null },
+            { writeLockAt: { $exists: false } },
+          ],
+        },
+        { $set: { writeLock: false, writeLockAt: null } },
+        { new: true }
+      ).lean();
+
+      // Another request may have refreshed or completed the lock after our
+      // initial read. Never continue with a stale snapshot in that case.
+      if (!unlockedChapter) {
+        return res.status(409).json({
+          error: 'Chapter save is still in progress. Retry shortly.',
+          saving: true,
+          revision: chapter.revision || 0,
+        });
+      }
       chapter.writeLock = false;
     }
     if (chapter.writeLock) {
@@ -442,6 +488,8 @@ router.get('/:chapterId/content', async (req, res) => {
 router.put('/:chapterId/content', async (req, res) => {
   let lockedChapterId = null;
   let lockedRevision = null;
+  let originalChunks = null;
+  let lockedNoteId = null;
   try {
     const note = await findOwnedNote(req);
     if (!note) return res.status(404).json({ error: 'Note not found' });
@@ -474,7 +522,7 @@ router.put('/:chapterId/content', async (req, res) => {
 
     // Claim this revision atomically before writing chunks. Two saves based on
     // the same revision cannot both proceed and silently overwrite one another.
-    const staleLockBefore = new Date(Date.now() - 5 * 60 * 1000);
+    const staleLockBefore = new Date(Date.now() - WRITE_LOCK_TIMEOUT_MS);
     const revisionClaim = await Chapter.findOneAndUpdate(
       {
         _id: chapter._id,
@@ -483,12 +531,11 @@ router.put('/:chapterId/content', async (req, res) => {
         $or: [
           { writeLock: { $ne: true } },
           { writeLockAt: { $lt: staleLockBefore } },
+          { writeLockAt: null },
+          { writeLockAt: { $exists: false } },
         ],
       },
-      {
-        $inc: { revision: 1 },
-        $set: { writeLock: true, writeLockAt: new Date() },
-      },
+      { $set: { writeLock: true, writeLockAt: new Date() } },
       { new: true, projection: { revision: 1 } }
     ).lean();
 
@@ -507,26 +554,38 @@ router.put('/:chapterId/content', async (req, res) => {
       });
     }
 
-    const savedRevision = revisionClaim.revision;
+    const savedRevision = expectedRevision + 1;
     lockedChapterId = chapter._id;
-    lockedRevision = savedRevision;
+    lockedNoteId = note._id;
+    lockedRevision = expectedRevision;
     const normalizedNodes = sanitizedDocument.content.length ? sanitizedDocument.content : [{ type: 'paragraph' }];
     const groups = splitDocumentNodes(normalizedNodes);
     const oldChunks = await NoteChunk.find({
       noteId: note._id,
       chapterId: chapter._id,
     }).sort({ seq: 1 }).lean();
+    originalChunks = oldChunks;
 
-    const allNoteChunks = await NoteChunk.find({ noteId: note._id })
-      .select('seq')
-      .sort({ seq: -1 })
-      .limit(1)
-      .lean();
-    let nextSeq = (allNoteChunks[0]?.seq ?? -1) + 1;
+    const newChunkCount = Math.max(0, groups.length - oldChunks.length);
+    let nextNewSeq = null;
+    if (newChunkCount > 0) {
+      const latestChunk = await NoteChunk.findOne({ noteId: note._id })
+        .select('seq')
+        .sort({ seq: -1 })
+        .lean();
+      nextNewSeq = await reserveChunkSequences(
+        note._id,
+        newChunkCount,
+        latestChunk?.seq ?? -1
+      );
+    }
 
-    const assignedSeqs = groups.map((_, index) =>
-      oldChunks[index]?.seq ?? nextSeq++
-    );
+    const assignedSeqs = groups.map((_, index) => {
+      if (oldChunks[index]) return oldChunks[index].seq;
+      const seq = nextNewSeq;
+      nextNewSeq += 1;
+      return seq;
+    });
 
     const operations = groups.map((nodes, index) => {
       const oldChunk = oldChunks[index];
@@ -570,8 +629,8 @@ router.put('/:chapterId/content', async (req, res) => {
 
     await Note.updateOne({ _id: note._id }, { $set: { updatedAt: new Date() } });
     const released = await Chapter.updateOne(
-      { _id: chapter._id, revision: savedRevision, writeLock: true },
-      { $set: { writeLock: false, writeLockAt: null } }
+      { _id: chapter._id, revision: expectedRevision, writeLock: true },
+      { $inc: { revision: 1 }, $set: { writeLock: false, writeLockAt: null } }
     );
     if (released.matchedCount !== 1) {
       throw new Error('Chapter save lock was lost before completion');
@@ -588,7 +647,36 @@ router.put('/:chapterId/content', async (req, res) => {
       deletedChunks: obsoleteSeqs.length,
     });
   } catch (error) {
+    let rollbackFailed = false;
+
     if (lockedChapterId && lockedRevision !== null) {
+      try {
+        if (originalChunks !== null) {
+          const originalSeqs = originalChunks.map((chunk) => chunk.seq);
+
+          // A bulk write or stale-chunk cleanup can fail partway through. Put
+          // the chapter's previous chunk snapshot back before releasing its lock.
+          if (originalChunks.length) {
+            await NoteChunk.bulkWrite(originalChunks.map((chunk) => ({
+              replaceOne: {
+                filter: { _id: chunk._id, noteId: chunk.noteId },
+                replacement: chunk,
+                upsert: true,
+              },
+            })));
+          }
+
+          await NoteChunk.deleteMany({
+            noteId: lockedNoteId,
+            chapterId: lockedChapterId,
+            seq: { $nin: originalSeqs },
+          });
+        }
+      } catch (rollbackError) {
+        rollbackFailed = true;
+        console.error('Could not restore chapter chunks after failed save:', rollbackError);
+      }
+
       try {
         await Chapter.updateOne(
           { _id: lockedChapterId, revision: lockedRevision, writeLock: true },
@@ -598,8 +686,13 @@ router.put('/:chapterId/content', async (req, res) => {
         console.error('Could not release chapter save lock:', releaseError);
       }
     }
+
     console.error('Save chapter content error:', error);
-    res.status(500).json({ error: 'Failed to save chapter content' });
+    res.status(500).json({
+      error: 'Failed to save chapter content',
+      recoveryRequired: rollbackFailed,
+      revision: lockedRevision,
+    });
   }
 });
 

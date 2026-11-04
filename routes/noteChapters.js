@@ -448,7 +448,13 @@ router.get('/:chapterId/content', async (req, res) => {
 
     const hasLegacyBlocks = chunks.some((chunk) => chunk.blocks?.length);
     const nodes = chunks.flatMap((chunk) => chunk.nodes || []);
-    const noteWithLegacyBlocks = !hasLegacyBlocks && nodes.length === 0 && chapter.order === 0
+    const firstChapter = !hasLegacyBlocks && nodes.length === 0
+      ? await Chapter.findOne({ noteId: note._id })
+        .sort({ order: 1, createdAt: 1 })
+        .select('_id')
+        .lean()
+      : null;
+    const noteWithLegacyBlocks = firstChapter && String(firstChapter._id) === String(chapter._id)
       ? await Note.findById(note._id).select('blocks').lean()
       : null;
     const unchunkedLegacyBlocks = Array.isArray(noteWithLegacyBlocks?.blocks)
@@ -636,8 +642,14 @@ router.put('/:chapterId/content', async (req, res) => {
       });
     }
 
+    const firstChapter = await Chapter.findOne({ noteId: note._id })
+      .sort({ order: 1, createdAt: 1 })
+      .select('_id')
+      .lean();
     const noteUpdate = { $set: { updatedAt: new Date() } };
-    if (chapter.order === 0) noteUpdate.$unset = { blocks: '' };
+    if (firstChapter && String(firstChapter._id) === String(chapter._id)) {
+      noteUpdate.$unset = { blocks: '' };
+    }
     await Note.updateOne({ _id: note._id }, noteUpdate);
     const released = await Chapter.updateOne(
       { _id: chapter._id, revision: expectedRevision, writeLock: true },

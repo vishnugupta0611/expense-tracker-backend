@@ -199,7 +199,7 @@ router.get('/:chapterId/content', async (req, res) => {
       },
       document: hasLegacyBlocks && nodes.length === 0
         ? null
-        : { type: 'doc', content: nodes },
+        : { type: 'doc', content: nodes.length ? nodes : [{ type: 'paragraph' }] },
       legacyBlocks: hasLegacyBlocks && nodes.length === 0
         ? chunks.flatMap((chunk) => chunk.blocks || [])
         : undefined,
@@ -259,7 +259,8 @@ router.put('/:chapterId/content', async (req, res) => {
       });
     }
 
-    const groups = splitDocumentNodes(document.content);
+    const normalizedNodes = document.content.length ? document.content : [{ type: 'paragraph' }];
+    const groups = splitDocumentNodes(normalizedNodes);
     const oldChunks = await NoteChunk.find({
       noteId: note._id,
       chapterId: chapter._id,

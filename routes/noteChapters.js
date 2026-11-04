@@ -448,6 +448,13 @@ router.get('/:chapterId/content', async (req, res) => {
 
     const hasLegacyBlocks = chunks.some((chunk) => chunk.blocks?.length);
     const nodes = chunks.flatMap((chunk) => chunk.nodes || []);
+    const noteWithLegacyBlocks = !hasLegacyBlocks && nodes.length === 0 && chapter.order === 0
+      ? await Note.findById(note._id).select('blocks').lean()
+      : null;
+    const unchunkedLegacyBlocks = Array.isArray(noteWithLegacyBlocks?.blocks)
+      ? noteWithLegacyBlocks.blocks
+      : [];
+    const useUnchunkedLegacyBlocks = unchunkedLegacyBlocks.length > 0;
     const response = {
       chapter: {
         _id: chapter._id,
@@ -455,12 +462,14 @@ router.get('/:chapterId/content', async (req, res) => {
         order: chapter.order,
         revision: chapter.revision || 0,
       },
-      document: hasLegacyBlocks && nodes.length === 0
+      document: (hasLegacyBlocks && nodes.length === 0) || useUnchunkedLegacyBlocks
         ? null
         : { type: 'doc', content: nodes.length ? nodes : [{ type: 'paragraph' }] },
       legacyBlocks: hasLegacyBlocks && nodes.length === 0
         ? chunks.flatMap((chunk) => chunk.blocks || [])
-        : undefined,
+        : useUnchunkedLegacyBlocks
+          ? unchunkedLegacyBlocks
+          : undefined,
       chunkCount: chunks.length,
       formatVersion: chunks.reduce(
         (version, chunk) => Math.max(version, chunk.formatVersion || 0),
@@ -627,7 +636,9 @@ router.put('/:chapterId/content', async (req, res) => {
       });
     }
 
-    await Note.updateOne({ _id: note._id }, { $set: { updatedAt: new Date() } });
+    const noteUpdate = { $set: { updatedAt: new Date() } };
+    if (chapter.order === 0) noteUpdate.$unset = { blocks: '' };
+    await Note.updateOne({ _id: note._id }, noteUpdate);
     const released = await Chapter.updateOne(
       { _id: chapter._id, revision: expectedRevision, writeLock: true },
       { $inc: { revision: 1 }, $set: { writeLock: false, writeLockAt: null } }

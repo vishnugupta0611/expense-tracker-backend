@@ -11,15 +11,21 @@ const blockSchema = new mongoose.Schema({
   alt:       { type: String },
 }, { _id: false });
 
-// One chunk = up to ~4000 chars of block content
+// Legacy notes continue using blocks. New Tiptap chapters store complete top-level
+// ProseMirror nodes in nodes, keeping both formats readable during migration.
 const noteChunkSchema = new mongoose.Schema({
-  noteId:    { type: mongoose.Schema.Types.ObjectId, ref: 'Note', required: true, index: true },
-  seq:       { type: Number, required: true },   // 0, 1, 2 ...
-  blocks:    { type: [blockSchema], default: [] },
-  charCount: { type: Number, default: 0 },       // cached sum of content lengths
+  noteId:        { type: mongoose.Schema.Types.ObjectId, ref: 'Note', required: true, index: true },
+  chapterId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Chapter', index: true },
+  seq:           { type: Number, required: true },
+  blocks:        { type: [blockSchema], default: [] },
+  nodes:         { type: [mongoose.Schema.Types.Mixed], default: [] },
+  formatVersion: { type: Number, default: 0 },
+  charCount:     { type: Number, default: 0 },
 }, { timestamps: false });
 
-// Compound unique index: one chunk per (noteId, seq)
+// Keep the existing note-wide sequence constraint so old chunk APIs remain valid.
+// Chapter chunks use the same sequence space; chapterId is an additional lookup key.
 noteChunkSchema.index({ noteId: 1, seq: 1 }, { unique: true });
+noteChunkSchema.index({ noteId: 1, chapterId: 1, seq: 1 });
 
 module.exports = mongoose.model('NoteChunk', noteChunkSchema);

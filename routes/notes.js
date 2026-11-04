@@ -156,7 +156,7 @@ router.get('/public/:id', async (req, res) => {
   try {
     if (!ObjectId.isValid(req.params.id)) return res.status(404).json({ error: 'Note not found' });
     const note = await Note.findById(req.params.id).lean();
-    if (!note) return res.status(404).json({ error: 'Note not found' });
+    if (!note || note.isPublic !== true) return res.status(404).json({ error: 'Note not found' });
 
     const [chunks, chapters] = await Promise.all([
       NoteChunk.find({ noteId: note._id }).sort({ seq: 1 }).lean(),
@@ -234,8 +234,8 @@ router.get('/public/:id', async (req, res) => {
 router.get('/public/:id/chunks', async (req, res) => {
   try {
     const noteId = req.params.id;
-    const note = await Note.findById(noteId).select('_id').lean();
-    if (!note) return res.status(404).json({ error: 'Note not found' });
+    const note = await Note.findById(noteId).select('_id isPublic').lean();
+    if (!note || note.isPublic !== true) return res.status(404).json({ error: 'Note not found' });
 
     const startSeq = Number.parseInt(req.query.startSeq ?? '0', 10);
     const requestedLimit = Number.parseInt(req.query.limit ?? '3', 10);
@@ -269,7 +269,7 @@ router.get('/', auth, async (req, res) => {
     }
 
     const notes = await Note.find(filter)
-      .select('title categoryId summary project tags sourceProvider sourceUrl personalNotes updatedAt createdAt')
+      .select('title categoryId summary project tags sourceProvider sourceUrl personalNotes isPublic updatedAt createdAt')
       .populate('categoryId', 'name isDefault')
       .sort(search ? { score: { $meta: 'textScore' } } : { updatedAt: -1 })
       .lean();
@@ -304,13 +304,31 @@ router.get('/:id/chunks', auth, async (req, res) => {
   }
 });
 
+// PATCH /api/notes/:id/public — explicitly publish or unpublish a note.
+router.patch('/:id/public', auth, async (req, res) => {
+  try {
+    if (typeof req.body?.isPublic !== 'boolean') {
+      return res.status(400).json({ error: 'isPublic must be a boolean' });
+    }
+    const note = await Note.findOneAndUpdate(
+      { _id: req.params.id, userId: req.userId },
+      { $set: { isPublic: req.body.isPublic, updatedAt: new Date() } },
+      { new: true, select: '_id isPublic updatedAt' }
+    ).lean();
+    if (!note) return res.status(404).json({ error: 'Note not found' });
+    res.json({ note });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update note visibility' });
+  }
+});
+
 // GET /api/notes/:id — note metadata + chunks (first chunks by default, or all chunks when ?full=1)
 // GET /api/notes/:id/meta — lightweight note metadata for the chapter workspace
 router.get('/:id/meta', auth, async (req, res) => {
   try {
     const note = await Note.findOne({ _id: req.params.id, userId: req.userId })
       .populate('categoryId', 'name isDefault')
-      .select('title categoryId summary project tags sourceProvider sourceUrl personalNotes createdAt updatedAt')
+      .select('title categoryId summary project tags sourceProvider sourceUrl personalNotes isPublic createdAt updatedAt')
       .lean();
     if (!note) return res.status(404).json({ error: 'Note not found' });
     res.json({ note });

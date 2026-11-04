@@ -253,6 +253,19 @@ router.get('/:id/chunks', auth, async (req, res) => {
 });
 
 // GET /api/notes/:id — note metadata + chunks (first chunks by default, or all chunks when ?full=1)
+// GET /api/notes/:id/meta — lightweight note metadata for the chapter workspace
+router.get('/:id/meta', auth, async (req, res) => {
+  try {
+    const note = await Note.findOne({ _id: req.params.id, userId: req.userId })
+      .populate('categoryId', 'name isDefault')
+      .select('title categoryId summary project tags sourceProvider sourceUrl personalNotes createdAt updatedAt')
+      .lean();
+    if (!note) return res.status(404).json({ error: 'Note not found' });
+    res.json({ note });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch note metadata' });
+  }
+});
 router.get('/:id', auth, async (req, res) => {
   try {
     const note = await Note.findOne({ _id: req.params.id, userId: req.userId })

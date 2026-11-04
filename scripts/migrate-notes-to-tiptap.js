@@ -21,8 +21,8 @@ const TARGET_BYTES = 12000;
 
 function textFromHtml(value = '') {
   return String(value)
-    .replace(/<br\\s*\\/?\\s*>/gi, '\\n')
-    .replace(/<\\/(p|div|li|h[1-6])\\s*>/gi, '\\n')
+    .replace(/<br\s*\/?\s*>/gi, '\n')
+    .replace(/<\/(p|div|li|h[1-6])\s*>/gi, '\n')
     .replace(/<[^>]*>/g, '')
     .replace(/&nbsp;/gi, ' ')
     .replace(/&amp;/gi, '&')
@@ -45,12 +45,12 @@ function convertBlock(block) {
     case 'h1': case 'h2': case 'h3': case 'h4': case 'h5': case 'h6':
       return { type: 'heading', attrs: { level: Number(block.type.slice(1)) }, ...(inline.length ? { content: inline } : {}) };
     case 'image':
-      if (!/^https?:\\/\\//i.test(raw.trim())) return { type: 'paragraph', ...(inline.length ? { content: inline } : {}) };
+      if (!/^https?:\/\//i.test(raw.trim())) return { type: 'paragraph', ...(inline.length ? { content: inline } : {}) };
       return { type: 'paragraph', content: [{ type: 'image', attrs: { src: raw.trim(), alt: block.alt || '', title: '', position: block.position || 'center', size: block.size || 'medium', caption: block.caption || '' } }] };
     case 'divider': return { type: 'horizontalRule' };
     case 'code': return { type: 'codeBlock', attrs: { language: block.language || 'text' }, ...(raw ? { content: [{ type: 'text', text: raw }] } : {}) };
     case 'ul': case 'ol': {
-      const lis = [...raw.matchAll(/<li\\b[^>]*>([\\s\\S]*?)<\\/li>/gi)].map((m) => ({
+      const lis = [...raw.matchAll(/<li\b[^>]*>([\s\S]*?)<\/li>/gi)].map((m) => ({
         type: 'listItem', content: [{ type: 'paragraph', ...(inlineText(m[1]).length ? { content: inlineText(m[1]) } : {}) }],
       }));
       return lis.length ? { type: block.type === 'ul' ? 'bulletList' : 'orderedList', content: lis } : { type: 'paragraph', ...(inline.length ? { content: inline } : {}) };

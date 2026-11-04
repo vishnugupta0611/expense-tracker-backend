@@ -136,7 +136,7 @@ router.get('/public/:id', async (req, res) => {
     if (!note) return res.status(404).json({ error: 'Note not found' });
 
     // Migrate old note formats on the fly
-    if (note.blocks && note.blocks.length > 0) {
+    if (note.blocks && note.blocks.length > 0 && !(await Chapter.exists({ noteId: note._id }))) {
       await saveChunks(note._id, note.blocks);
       await Note.updateOne({ _id: note._id }, { $unset: { blocks: "" } });
       note.blocks = undefined;
@@ -172,6 +172,19 @@ router.get('/public/:id', async (req, res) => {
         legacyBlocks: nodes.length ? undefined : legacyBlocks,
       };
     });
+
+    if (note.blocks?.length && chapterViews.length) {
+      const chapterHasContent = chapterViews.some((chapter) =>
+        chapter.legacyBlocks?.length ||
+        (chapter.document?.content || []).some((node) =>
+          node.type !== 'paragraph' || node.content?.length
+        )
+      );
+      if (!chapterHasContent) {
+        chapterViews[0].document = null;
+        chapterViews[0].legacyBlocks = note.blocks;
+      }
+    }
 
     res.json({
       note: {
@@ -274,7 +287,7 @@ router.get('/:id', auth, async (req, res) => {
     if (!note) return res.status(404).json({ error: 'Note not found' });
 
     // Migrate old note formats on the fly
-    if (note.blocks && note.blocks.length > 0) {
+    if (note.blocks && note.blocks.length > 0 && !(await Chapter.exists({ noteId: note._id }))) {
       await saveChunks(note._id, note.blocks);
       await Note.updateOne({ _id: note._id }, { $unset: { blocks: "" } });
       note.blocks = undefined;
@@ -284,7 +297,8 @@ router.get('/:id', auth, async (req, res) => {
     const chunks = await NoteChunk.find({ noteId: note._id })
       .sort({ seq: 1 })
       .lean();
-    const blocks = chunks.flatMap(c => c.blocks);
+    const storedBlocks = chunks.flatMap(c => c.blocks || []);
+    const blocks = storedBlocks.length ? storedBlocks : (note.blocks || []);
 
     res.json({ note: { ...note, blocks, totalChunks: chunks.length } });
   } catch (e) {
@@ -337,6 +351,12 @@ router.post('/', auth, async (req, res) => {
 // NOTE: must be defined BEFORE /:id to avoid route conflict
 router.patch('/:id/chunks', auth, async (req, res) => {
   try {
+    if (await Chapter.exists({ noteId: req.params.id })) {
+      return res.status(409).json({
+        error: 'This note uses chapter-based content. Open the chapter editor to edit its content.',
+      });
+    }
+
     const {
       title,
       categoryId,
@@ -397,6 +417,12 @@ router.patch('/:id/chunks', auth, async (req, res) => {
 // PATCH /api/notes/:id — autosave (title + metadata + blocks, chunked)
 router.patch('/:id', auth, async (req, res) => {
   try {
+    if (Array.isArray(req.body?.blocks) && await Chapter.exists({ noteId: req.params.id })) {
+      return res.status(409).json({
+        error: 'This note uses chapter-based content. Open the chapter editor to edit its content.',
+      });
+    }
+
     const {
       title,
       categoryId,
@@ -437,6 +463,12 @@ router.patch('/:id', auth, async (req, res) => {
 // PUT /api/notes/:id — full overwrite (backward compat)
 router.put('/:id', auth, async (req, res) => {
   try {
+    if (Array.isArray(req.body?.blocks) && await Chapter.exists({ noteId: req.params.id })) {
+      return res.status(409).json({
+        error: 'This note uses chapter-based content. Open the chapter editor to edit its content.',
+      });
+    }
+
     const {
       title,
       categoryId,

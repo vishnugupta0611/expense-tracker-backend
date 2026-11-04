@@ -6,6 +6,7 @@ const mongoose = require('mongoose');
 const auth     = require('../middleware/auth');
 const Note     = require('../models/Note');
 const NoteChunk = require('../models/NoteChunk');
+const Chapter = require('../models/Chapter');
 const { Types: { ObjectId } } = mongoose;
 
 const CHUNK_CHAR_LIMIT = 4000;
@@ -429,7 +430,12 @@ router.put('/:id', auth, async (req, res) => {
 router.delete('/:id', auth, async (req, res) => {
   try {
     const note = await Note.findOneAndDelete({ _id: req.params.id, userId: req.userId });
-    if (note) await NoteChunk.deleteMany({ noteId: note._id });
+    if (note) {
+      await Promise.all([
+        NoteChunk.deleteMany({ noteId: note._id }),
+        Chapter.deleteMany({ noteId: note._id }),
+      ]);
+    }
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: 'Failed to delete note' });

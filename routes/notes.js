@@ -73,10 +73,21 @@ async function loadBlocks(noteId) {
 // ── Cloudinary helpers ────────────────────────────────────────────────────────
 
 function makeSignature(folder, timestamp) {
-  const secret = process.env.CLOUDINARY_API_SECRET;
+  const { CLOUDINARY_API_SECRET, CLOUDINARY_API_KEY, CLOUDINARY_CLOUD_NAME } = process.env;
+  if (!CLOUDINARY_API_SECRET || !CLOUDINARY_API_KEY || !CLOUDINARY_CLOUD_NAME) {
+    throw new Error('Cloudinary is not configured');
+  }
   return crypto.createHash('sha1')
-    .update(`folder=${folder}&timestamp=${timestamp}${secret}`)
+    .update(`folder=${folder}&timestamp=${timestamp}${CLOUDINARY_API_SECRET}`)
     .digest('hex');
+}
+
+function imageMatchesMimeType(buffer, mimeType) {
+  if (mimeType === 'image/jpeg') return buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  if (mimeType === 'image/png') return buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  if (mimeType === 'image/gif') return buffer.subarray(0, 6).toString('ascii').match(/^GIF8[79]a$/) !== null;
+  if (mimeType === 'image/webp') return buffer.length >= 12 && buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP';
+  return false;
 }
 
 const uploadToCloudinary = (base64Data, mimeType) =>
@@ -102,6 +113,7 @@ const uploadToCloudinary = (base64Data, mimeType) =>
         } catch (e) { reject(e); }
       });
     });
+    req.setTimeout(30_000, () => req.destroy(new Error('Cloudinary upload timed out')));
     req.on('error', reject);
     req.write(payload, 'utf8');
     req.end();
@@ -122,9 +134,12 @@ router.post('/upload-image', auth, async (req, res) => {
     if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) {
       return res.status(400).json({ error: 'Invalid base64 image data' });
     }
-    const imageBytes = Buffer.from(base64, 'base64').length;
-    if (!imageBytes || imageBytes > MAX_IMAGE_BYTES) {
+    const imageBuffer = Buffer.from(base64, 'base64');
+    if (!imageBuffer.length || imageBuffer.length > MAX_IMAGE_BYTES) {
       return res.status(413).json({ error: 'Image must be smaller than 10 MB' });
+    }
+    if (!imageMatchesMimeType(imageBuffer, mimeType)) {
+      return res.status(400).json({ error: 'Image content does not match mimeType' });
     }
     const url = await uploadToCloudinary(base64, mimeType);
     res.json({ url });

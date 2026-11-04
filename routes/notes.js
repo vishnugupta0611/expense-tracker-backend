@@ -142,11 +142,45 @@ router.get('/public/:id', async (req, res) => {
       note.blocks = undefined;
     }
 
-    const chunks = await NoteChunk.find({ noteId: note._id })
-      .sort({ seq: 1 })
-      .lean();
-    const blocks = chunks.flatMap(c => c.blocks);
-    res.json({ note: { ...note, blocks, totalChunks: chunks.length } });
+    const [chunks, chapters] = await Promise.all([
+      NoteChunk.find({ noteId: note._id }).sort({ seq: 1 }).lean(),
+      Chapter.find({ noteId: note._id })
+        .sort({ order: 1, createdAt: 1 })
+        .select('title description summary order revision')
+        .lean(),
+    ]);
+
+    const blocks = chunks.flatMap((chunk) => chunk.blocks || []);
+    const chapterViews = chapters.map((chapter) => {
+      const chapterChunks = chunks.filter(
+        (chunk) => String(chunk.chapterId) === String(chapter._id)
+      );
+      const nodes = chapterChunks.flatMap((chunk) => chunk.nodes || []);
+      const legacyBlocks = chapterChunks.flatMap((chunk) => chunk.blocks || []);
+
+      return {
+        _id: chapter._id,
+        title: chapter.title,
+        description: chapter.description,
+        summary: chapter.summary,
+        order: chapter.order,
+        document: nodes.length
+          ? { type: 'doc', content: nodes }
+          : legacyBlocks.length
+            ? null
+            : { type: 'doc', content: [{ type: 'paragraph' }] },
+        legacyBlocks: nodes.length ? undefined : legacyBlocks,
+      };
+    });
+
+    res.json({
+      note: {
+        ...note,
+        blocks,
+        chapters: chapterViews,
+        totalChunks: chunks.length,
+      },
+    });
   } catch (e) {
     res.status(500).json({ error: 'Failed to fetch note' });
   }

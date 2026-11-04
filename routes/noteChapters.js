@@ -646,11 +646,13 @@ router.put('/:chapterId/content', async (req, res) => {
       .sort({ order: 1, createdAt: 1 })
       .select('_id')
       .lean();
-    const noteUpdate = { $set: { updatedAt: new Date() } };
-    if (firstChapter && String(firstChapter._id) === String(chapter._id)) {
-      noteUpdate.$unset = { blocks: '' };
-    }
-    await Note.updateOne({ _id: note._id }, noteUpdate);
+    const shouldClearLegacyBlocks = firstChapter &&
+      String(firstChapter._id) === String(chapter._id);
+
+    await Note.updateOne(
+      { _id: note._id },
+      { $set: { updatedAt: new Date() } }
+    );
     const released = await Chapter.updateOne(
       { _id: chapter._id, revision: expectedRevision, writeLock: true },
       { $inc: { revision: 1 }, $set: { writeLock: false, writeLockAt: null } }
@@ -660,6 +662,16 @@ router.put('/:chapterId/content', async (req, res) => {
     }
     lockedChapterId = null;
     lockedRevision = null;
+
+    // The new chapter content is committed now. Removing the old source field
+    // is best-effort cleanup and must not turn a successful save into a failure.
+    if (shouldClearLegacyBlocks) {
+      try {
+        await Note.updateOne({ _id: note._id }, { $unset: { blocks: '' } });
+      } catch (cleanupError) {
+        console.error('Could not clear migrated top-level note blocks:', cleanupError);
+      }
+    }
 
     res.json({
       success: true,
@@ -768,6 +780,9 @@ router.delete('/:chapterId', async (req, res) => {
       noteId: note._id,
     });
     if (!chapter) return res.status(404).json({ error: 'Chapter not found' });
+    if (chapter.writeLock) {
+      return res.status(409).json({ error: 'This chapter is currently being saved. Try again shortly.' });
+    }
 
     await NoteChunk.deleteMany({ noteId: note._id, chapterId: chapter._id });
     await chapter.deleteOne();

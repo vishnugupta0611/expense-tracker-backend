@@ -4,6 +4,121 @@ const auth    = require('../middleware/auth');
 const Category = require('../models/Category');
 const Note     = require('../models/Note');
 
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\const Note     = require('../models/Note');
+');
+
+// @route   GET /api/categories
+// @desc    Get all user-created categories
+// @access  Private
+router.get('/', auth, async (req, res) => {
+  try {
+    const categories = await Category.find({ userId: req.userId }).sort({ name: 1 });
+    res.json({ categories });
+  } catch (error) {
+    console.error('Get categories error:', error);
+    res.status(500).json({ error: 'Failed to get categories' });
+  }
+});
+
+// @route   POST /api/categories
+// @desc    Create custom category
+// @access  Private
+router.post('/', auth, async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'Category name is required' });
+    }
+
+    const trimmed = name.trim();
+    // Check if category already exists for this user (case-insensitive)
+    const existingCategory = await Category.findOne({
+      userId: req.userId,
+      name: { $regex: new RegExp(`^${escapeRegex(trimmed)}const express = require('express');
+const router  = express.Router();
+const auth    = require('../middleware/auth');
+const Category = require('../models/Category');
+const Note     = require('../models/Note');
+
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\const Note     = require('../models/Note');
+');
+
+// @route   GET /api/categories
+// @desc    Get all user-created categories
+// @access  Private
+router.get('/', auth, async (req, res) => {
+  try {
+    const categories = await Category.find({ userId: req.userId }).sort({ name: 1 });
+    res.json({ categories });
+  } catch (error) {
+    console.error('Get categories error:', error);
+    res.status(500).json({ error: 'Failed to get categories' });
+  }
+});
+
+// @route   POST /api/categories
+// @desc    Create custom category
+// @access  Private
+router.post('/', auth, async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'Category name is required' });
+    }
+
+    const trimmed = name.trim();
+    // Check if category already exists for this user (case-insensitive)
+    const existingCategory = await Category.findOne({
+      userId: req.userId,
+      name: { $regex: , 'i') },
+    });
+
+    if (existingCategory) {
+      return res.status(400).json({ error: 'Category already exists' });
+    }
+
+    const category = await Category.create({
+      userId: req.userId,
+      name: trimmed,
+      isDefault: false,
+    });
+
+    res.status(201).json({ category });
+  } catch (error) {
+    if (error.code === 11000) return res.status(400).json({ error: 'Category already exists' });
+    console.error('Create category error:', error);
+    res.status(500).json({ error: 'Failed to create category' });
+  }
+});
+
+// @route   PATCH /api/categories/:id
+// @desc    Rename category
+// @access  Private
+router.patch('/:id', auth, async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'Category name is required' });
+    }
+
+    const trimmed = name.trim();
+    const category = await Category.findOne({ _id: req.params.id, userId: req.userId });
+    if (!category) {
+      return res.status(404).json({ error: 'Category not found' });
+    }
+
+    const duplicate = await Category.findOne({
+      userId: req.userId,
+      _id: { $ne: category._id },
+      name: { $regex: new RegExp(`^${escapeRegex(trimmed)}const express = require('express');
+const router  = express.Router();
+const auth    = require('../middleware/auth');
+const Category = require('../models/Category');
+const Note     = require('../models/Note');
+
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\const Note     = require('../models/Note');
+');
+
 // @route   GET /api/categories
 // @desc    Get all user-created categories
 // @access  Private
@@ -46,6 +161,7 @@ router.post('/', auth, async (req, res) => {
 
     res.status(201).json({ category });
   } catch (error) {
+    if (error.code === 11000) return res.status(400).json({ error: 'Category already exists' });
     console.error('Create category error:', error);
     res.status(500).json({ error: 'Failed to create category' });
   }
@@ -70,7 +186,7 @@ router.patch('/:id', auth, async (req, res) => {
     const duplicate = await Category.findOne({
       userId: req.userId,
       _id: { $ne: category._id },
-      name: { $regex: new RegExp(`^${trimmed}$`, 'i') },
+      name: { $regex: , 'i') },
     });
     if (duplicate) {
       return res.status(400).json({ error: 'Another category with this name already exists' });
@@ -81,6 +197,7 @@ router.patch('/:id', auth, async (req, res) => {
 
     res.json({ category });
   } catch (error) {
+    if (error.code === 11000) return res.status(400).json({ error: 'Another category with this name already exists' });
     console.error('Edit category error:', error);
     res.status(500).json({ error: 'Failed to edit category' });
   }

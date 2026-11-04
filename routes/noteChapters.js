@@ -108,7 +108,7 @@ function safeColor(value) {
   if (typeof value !== 'string') return null;
   const color = value.trim();
   if (/^#[0-9a-f]{3,8}$/i.test(color)) return color;
-  if (/^(rgb|rgba|hsl|hsla)\\([0-9.,%\\s]+\\)$/i.test(color)) return color;
+  if (/^(rgb|rgba|hsl|hsla)\([0-9.,%\s]+\)$/i.test(color)) return color;
   if (/^[a-z]{3,20}$/i.test(color)) return color;
   return null;
 }

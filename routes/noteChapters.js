@@ -218,7 +218,7 @@ function sanitizeDocument(document) {
 
     const blockTypes = [
       'paragraph', 'heading', 'blockquote', 'bulletList', 'orderedList',
-      'listItem', 'codeBlock', 'horizontalRule', 'table', 'factCard',
+      'codeBlock', 'horizontalRule', 'table', 'factCard',
     ];
     const childRules = {
       doc: blockTypes,

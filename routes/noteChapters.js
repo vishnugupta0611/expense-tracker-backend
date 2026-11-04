@@ -209,10 +209,55 @@ function sanitizeDocument(document) {
       });
     }
 
+    if (node.content !== undefined && !Array.isArray(node.content)) {
+      throw new Error('Invalid child content in chapter document');
+    }
     if (Array.isArray(node.content)) {
       clean.content = node.content.map((child) => sanitizeNode(child, depth + 1));
-    } else if (['doc', 'paragraph', 'heading', 'blockquote', 'bulletList', 'orderedList', 'listItem', 'table', 'tableRow', 'tableCell', 'tableHeader', 'factCard'].includes(node.type)) {
-      clean.content = [];
+    }
+
+    const blockTypes = [
+      'paragraph', 'heading', 'blockquote', 'bulletList', 'orderedList',
+      'listItem', 'codeBlock', 'horizontalRule', 'table', 'factCard',
+    ];
+    const childRules = {
+      doc: blockTypes,
+      paragraph: ['text', 'hardBreak', 'image'],
+      heading: ['text', 'hardBreak', 'image'],
+      blockquote: blockTypes,
+      bulletList: ['listItem'],
+      orderedList: ['listItem'],
+      listItem: blockTypes,
+      codeBlock: ['text'],
+      table: ['tableRow'],
+      tableRow: ['tableCell', 'tableHeader'],
+      tableCell: blockTypes,
+      tableHeader: blockTypes,
+      factCard: blockTypes,
+    };
+    const children = clean.content || [];
+    if (
+      childRules[node.type] &&
+      children.some((child) => !childRules[node.type].includes(child.type))
+    ) {
+      throw new Error('Invalid node nesting in chapter document');
+    }
+    if (
+      ['doc', 'blockquote', 'bulletList', 'orderedList', 'listItem', 'table',
+        'tableRow', 'tableCell', 'tableHeader', 'factCard'].includes(node.type) &&
+      children.length === 0
+    ) {
+      throw new Error('A required content section is empty');
+    }
+    if (
+      !childRules[node.type] &&
+      Array.isArray(node.content) &&
+      node.content.length > 0
+    ) {
+      throw new Error('This editor node cannot contain child content');
+    }
+    if (Array.isArray(node.marks) && node.type !== 'text' && node.marks.length) {
+      throw new Error('Only text nodes can contain text marks');
     }
 
     if (isRoot && clean.type !== 'doc') throw new Error('Document root must be a doc node');

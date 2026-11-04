@@ -31,7 +31,13 @@ async function ensureDefaultChapter(noteId) {
   }
 
   await NoteChunk.updateMany(
-    { noteId, chapterId: { $exists: false } },
+    {
+      noteId,
+      $or: [
+        { chapterId: { $exists: false } },
+        { chapterId: null },
+      ],
+    },
     { $set: { chapterId: chapter._id } }
   );
 
@@ -249,16 +255,38 @@ router.put('/:chapterId/content', async (req, res) => {
     }
 
     const expectedRevision = req.body?.revision;
-    if (
-      Number.isInteger(expectedRevision) &&
-      expectedRevision !== (chapter.revision || 0)
-    ) {
-      return res.status(409).json({
-        error: 'Chapter has changed since it was loaded',
+    if (!Number.isInteger(expectedRevision) || expectedRevision < 0) {
+      return res.status(400).json({
+        error: 'revision is required; load the chapter content before saving',
         revision: chapter.revision || 0,
       });
     }
 
+    // Claim this revision atomically before writing chunks. Two saves based on
+    // the same revision cannot both proceed and silently overwrite one another.
+    const revisionClaim = await Chapter.findOneAndUpdate(
+      {
+        _id: chapter._id,
+        noteId: note._id,
+        revision: expectedRevision,
+      },
+      { $inc: { revision: 1 } },
+      { new: true, projection: { revision: 1 } }
+    ).lean();
+
+    if (!revisionClaim) {
+      const latestChapter = await Chapter.findOne({
+        _id: chapter._id,
+        noteId: note._id,
+      }).select('revision').lean();
+
+      return res.status(409).json({
+        error: 'Chapter has changed since it was loaded',
+        revision: latestChapter?.revision || 0,
+      });
+    }
+
+    const savedRevision = revisionClaim.revision;
     const normalizedNodes = document.content.length ? document.content : [{ type: 'paragraph' }];
     const groups = splitDocumentNodes(normalizedNodes);
     const oldChunks = await NoteChunk.find({
@@ -317,14 +345,12 @@ router.put('/:chapterId/content', async (req, res) => {
       });
     }
 
-    chapter.revision = (chapter.revision || 0) + 1;
-    await chapter.save();
     await Note.updateOne({ _id: note._id }, { $set: { updatedAt: new Date() } });
 
     res.json({
       success: true,
       chapterId: String(chapter._id),
-      revision: chapter.revision,
+      revision: savedRevision,
       chunkCount: groups.length,
       updatedChunks: operations.length,
       deletedChunks: obsoleteSeqs.length,

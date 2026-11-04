@@ -183,6 +183,21 @@ router.get('/public/:id', async (req, res) => {
       if (!chapterHasContent) {
         chapterViews[0].document = null;
         chapterViews[0].legacyBlocks = note.blocks;
+      } else {
+        const legacyAlreadyIncluded = chapterViews.some((chapter) =>
+          JSON.stringify(chapter.legacyBlocks || []) === JSON.stringify(note.blocks)
+        );
+        if (!legacyAlreadyIncluded) {
+          chapterViews.unshift({
+            _id: 'legacy-' + String(note._id),
+            title: 'Imported legacy content',
+            description: '',
+            summary: '',
+            order: -1,
+            document: null,
+            legacyBlocks: note.blocks,
+          });
+        }
       }
     }
 

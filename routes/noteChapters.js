@@ -446,6 +446,25 @@ router.get('/:chapterId/content', async (req, res) => {
       chapterId: chapter._id,
     }).sort({ seq: 1 }).lean();
 
+    // Recheck after reading chunks. A save may have started after the first
+    // chapter read; reject mixed snapshots instead of returning partial content.
+    const chapterAfterRead = await Chapter.findOne({
+      _id: chapter._id,
+      noteId: note._id,
+    }).select('revision writeLock writeLockAt').lean();
+
+    if (
+      !chapterAfterRead ||
+      chapterAfterRead.writeLock ||
+      (chapterAfterRead.revision || 0) !== (chapter.revision || 0)
+    ) {
+      return res.status(409).json({
+        error: 'Chapter changed while it was being loaded. Retry the request.',
+        saving: Boolean(chapterAfterRead?.writeLock),
+        revision: chapterAfterRead?.revision || 0,
+      });
+    }
+
     const hasLegacyBlocks = chunks.some((chunk) => chunk.blocks?.length);
     const nodes = chunks.flatMap((chunk) => chunk.nodes || []);
     const firstChapter = !hasLegacyBlocks && nodes.length === 0

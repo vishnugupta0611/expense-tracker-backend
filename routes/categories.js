@@ -31,8 +31,8 @@ router.post('/', auth, async (req, res) => {
     // Check if category already exists for this user (case-insensitive)
     const existingCategory = await Category.findOne({
       userId: req.userId,
-      name: { $regex: new RegExp(`^${trimmed}$`, 'i') },
-    });
+      name: trimmed,
+    }).collation({ locale: 'en', strength: 2 });
 
     if (existingCategory) {
       return res.status(400).json({ error: 'Category already exists' });
@@ -46,6 +46,7 @@ router.post('/', auth, async (req, res) => {
 
     res.status(201).json({ category });
   } catch (error) {
+    if (error.code === 11000) return res.status(400).json({ error: 'Category already exists' });
     console.error('Create category error:', error);
     res.status(500).json({ error: 'Failed to create category' });
   }
@@ -70,8 +71,8 @@ router.patch('/:id', auth, async (req, res) => {
     const duplicate = await Category.findOne({
       userId: req.userId,
       _id: { $ne: category._id },
-      name: { $regex: new RegExp(`^${trimmed}$`, 'i') },
-    });
+      name: trimmed,
+    }).collation({ locale: 'en', strength: 2 });
     if (duplicate) {
       return res.status(400).json({ error: 'Another category with this name already exists' });
     }
@@ -81,6 +82,7 @@ router.patch('/:id', auth, async (req, res) => {
 
     res.json({ category });
   } catch (error) {
+    if (error.code === 11000) return res.status(400).json({ error: 'Another category with this name already exists' });
     console.error('Edit category error:', error);
     res.status(500).json({ error: 'Failed to edit category' });
   }

@@ -7,9 +7,18 @@ const auth     = require('../middleware/auth');
 const Note     = require('../models/Note');
 const NoteChunk = require('../models/NoteChunk');
 const Chapter = require('../models/Chapter');
+const Category = require('../models/Category');
 const { Types: { ObjectId } } = mongoose;
 
 const CHUNK_CHAR_LIMIT = 4000;
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+
+async function categoryBelongsToUser(categoryId, userId) {
+  if (categoryId === undefined || categoryId === null || categoryId === '') return true;
+  if (!ObjectId.isValid(categoryId)) return false;
+  return Boolean(await Category.exists({ _id: categoryId, userId }));
+}
 
 // ── Chunk helpers ─────────────────────────────────────────────────────────────
 
@@ -64,10 +73,21 @@ async function loadBlocks(noteId) {
 // ── Cloudinary helpers ────────────────────────────────────────────────────────
 
 function makeSignature(folder, timestamp) {
-  const secret = process.env.CLOUDINARY_API_SECRET;
+  const { CLOUDINARY_API_SECRET, CLOUDINARY_API_KEY, CLOUDINARY_CLOUD_NAME } = process.env;
+  if (!CLOUDINARY_API_SECRET || !CLOUDINARY_API_KEY || !CLOUDINARY_CLOUD_NAME) {
+    throw new Error('Cloudinary is not configured');
+  }
   return crypto.createHash('sha1')
-    .update(`folder=${folder}&timestamp=${timestamp}${secret}`)
+    .update(`folder=${folder}&timestamp=${timestamp}${CLOUDINARY_API_SECRET}`)
     .digest('hex');
+}
+
+function imageMatchesMimeType(buffer, mimeType) {
+  if (mimeType === 'image/jpeg') return buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  if (mimeType === 'image/png') return buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  if (mimeType === 'image/gif') return buffer.subarray(0, 6).toString('ascii').match(/^GIF8[79]a$/) !== null;
+  if (mimeType === 'image/webp') return buffer.length >= 12 && buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP';
+  return false;
 }
 
 const uploadToCloudinary = (base64Data, mimeType) =>
@@ -93,6 +113,7 @@ const uploadToCloudinary = (base64Data, mimeType) =>
         } catch (e) { reject(e); }
       });
     });
+    req.setTimeout(30_000, () => req.destroy(new Error('Cloudinary upload timed out')));
     req.on('error', reject);
     req.write(payload, 'utf8');
     req.end();
@@ -103,12 +124,28 @@ const uploadToCloudinary = (base64Data, mimeType) =>
 // POST /api/notes/upload-image
 router.post('/upload-image', auth, async (req, res) => {
   try {
-    const { base64, mimeType } = req.body;
-    if (!base64 || !mimeType) return res.status(400).json({ error: 'base64 and mimeType required' });
+    const { base64, mimeType } = req.body || {};
+    if (typeof base64 !== 'string' || !base64 || typeof mimeType !== 'string') {
+      return res.status(400).json({ error: 'base64 and mimeType are required' });
+    }
+    if (!ALLOWED_IMAGE_TYPES.has(mimeType)) {
+      return res.status(415).json({ error: 'Unsupported image type' });
+    }
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) {
+      return res.status(400).json({ error: 'Invalid base64 image data' });
+    }
+    const imageBuffer = Buffer.from(base64, 'base64');
+    if (!imageBuffer.length || imageBuffer.length > MAX_IMAGE_BYTES) {
+      return res.status(413).json({ error: 'Image must be smaller than 10 MB' });
+    }
+    if (!imageMatchesMimeType(imageBuffer, mimeType)) {
+      return res.status(400).json({ error: 'Image content does not match mimeType' });
+    }
     const url = await uploadToCloudinary(base64, mimeType);
     res.json({ url });
   } catch (e) {
-    res.status(500).json({ error: 'Image upload failed', detail: e.message });
+    console.error('Note image upload failed:', e.message);
+    res.status(502).json({ error: 'Image upload failed' });
   }
 });
 
@@ -132,15 +169,9 @@ router.get('/upload-signature', auth, (req, res) => {
 // GET /api/notes/public/:id — read-only, metadata + first 3 chunks
 router.get('/public/:id', async (req, res) => {
   try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(404).json({ error: 'Note not found' });
     const note = await Note.findById(req.params.id).lean();
-    if (!note) return res.status(404).json({ error: 'Note not found' });
-
-    // Migrate old note formats on the fly
-    if (note.blocks && note.blocks.length > 0 && !(await Chapter.exists({ noteId: note._id }))) {
-      await saveChunks(note._id, note.blocks);
-      await Note.updateOne({ _id: note._id }, { $unset: { blocks: "" } });
-      note.blocks = undefined;
-    }
+    if (!note || note.isPublic !== true) return res.status(404).json({ error: 'Note not found' });
 
     const [chunks, chapters] = await Promise.all([
       NoteChunk.find({ noteId: note._id }).sort({ seq: 1 }).lean(),
@@ -218,11 +249,15 @@ router.get('/public/:id', async (req, res) => {
 router.get('/public/:id/chunks', async (req, res) => {
   try {
     const noteId = req.params.id;
-    const note = await Note.findById(noteId).select('_id').lean();
-    if (!note) return res.status(404).json({ error: 'Note not found' });
+    const note = await Note.findById(noteId).select('_id isPublic').lean();
+    if (!note || note.isPublic !== true) return res.status(404).json({ error: 'Note not found' });
 
-    const startSeq = parseInt(req.query.startSeq) || 0;
-    const limit = parseInt(req.query.limit) || 3;
+    const startSeq = Number.parseInt(req.query.startSeq ?? '0', 10);
+    const requestedLimit = Number.parseInt(req.query.limit ?? '3', 10);
+    if (!Number.isInteger(startSeq) || startSeq < 0 || !Number.isInteger(requestedLimit) || requestedLimit < 1) {
+      return res.status(400).json({ error: 'startSeq must be non-negative and limit must be a positive integer' });
+    }
+    const limit = Math.min(requestedLimit, 20);
 
     const chunks = await NoteChunk.find({ noteId: note._id, seq: { $gte: startSeq } })
       .sort({ seq: 1 })
@@ -249,7 +284,7 @@ router.get('/', auth, async (req, res) => {
     }
 
     const notes = await Note.find(filter)
-      .select('title categoryId summary project tags sourceProvider sourceUrl personalNotes updatedAt createdAt')
+      .select('title categoryId summary project tags sourceProvider sourceUrl personalNotes isPublic updatedAt createdAt')
       .populate('categoryId', 'name isDefault')
       .sort(search ? { score: { $meta: 'textScore' } } : { updatedAt: -1 })
       .lean();
@@ -266,8 +301,12 @@ router.get('/:id/chunks', auth, async (req, res) => {
     const note = await Note.findOne({ _id: noteId, userId: req.userId }).select('_id').lean();
     if (!note) return res.status(404).json({ error: 'Note not found' });
 
-    const startSeq = parseInt(req.query.startSeq) || 0;
-    const limit = parseInt(req.query.limit) || 3;
+    const startSeq = Number.parseInt(req.query.startSeq ?? '0', 10);
+    const requestedLimit = Number.parseInt(req.query.limit ?? '3', 10);
+    if (!Number.isInteger(startSeq) || startSeq < 0 || !Number.isInteger(requestedLimit) || requestedLimit < 1) {
+      return res.status(400).json({ error: 'startSeq must be non-negative and limit must be a positive integer' });
+    }
+    const limit = Math.min(requestedLimit, 20);
 
     const chunks = await NoteChunk.find({ noteId: note._id, seq: { $gte: startSeq } })
       .sort({ seq: 1 })
@@ -280,13 +319,31 @@ router.get('/:id/chunks', auth, async (req, res) => {
   }
 });
 
+// PATCH /api/notes/:id/public — explicitly publish or unpublish a note.
+router.patch('/:id/public', auth, async (req, res) => {
+  try {
+    if (typeof req.body?.isPublic !== 'boolean') {
+      return res.status(400).json({ error: 'isPublic must be a boolean' });
+    }
+    const note = await Note.findOneAndUpdate(
+      { _id: req.params.id, userId: req.userId },
+      { $set: { isPublic: req.body.isPublic, updatedAt: new Date() } },
+      { new: true, select: '_id isPublic updatedAt' }
+    ).lean();
+    if (!note) return res.status(404).json({ error: 'Note not found' });
+    res.json({ note });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update note visibility' });
+  }
+});
+
 // GET /api/notes/:id — note metadata + chunks (first chunks by default, or all chunks when ?full=1)
 // GET /api/notes/:id/meta — lightweight note metadata for the chapter workspace
 router.get('/:id/meta', auth, async (req, res) => {
   try {
     const note = await Note.findOne({ _id: req.params.id, userId: req.userId })
       .populate('categoryId', 'name isDefault')
-      .select('title categoryId summary project tags sourceProvider sourceUrl personalNotes createdAt updatedAt')
+      .select('title categoryId summary project tags sourceProvider sourceUrl personalNotes isPublic createdAt updatedAt')
       .lean();
     if (!note) return res.status(404).json({ error: 'Note not found' });
     res.json({ note });
@@ -336,6 +393,10 @@ router.post('/', auth, async (req, res) => {
       blocks,
     } = req.body || {};
 
+    if (!(await categoryBelongsToUser(categoryId, req.userId))) {
+      return res.status(400).json({ error: 'Invalid category for this user' });
+    }
+
     const note = await Note.create({
       userId: req.userId,
       title: title || 'Untitled',
@@ -384,6 +445,10 @@ router.patch('/:id/chunks', auth, async (req, res) => {
       dirty,
       deleteFrom,
     } = req.body;
+
+    if (categoryId !== undefined && !(await categoryBelongsToUser(categoryId, req.userId))) {
+      return res.status(400).json({ error: 'Invalid category for this user' });
+    }
 
     const update = { updatedAt: new Date() };
     if (title !== undefined) update.title = title;
@@ -450,6 +515,10 @@ router.patch('/:id', auth, async (req, res) => {
       blocks,
     } = req.body;
 
+    if (categoryId !== undefined && !(await categoryBelongsToUser(categoryId, req.userId))) {
+      return res.status(400).json({ error: 'Invalid category for this user' });
+    }
+
     const update = { updatedAt: new Date() };
     if (title !== undefined) update.title = title;
     if (categoryId !== undefined) update.categoryId = categoryId || null;
@@ -495,6 +564,10 @@ router.put('/:id', auth, async (req, res) => {
       personalNotes,
       blocks,
     } = req.body;
+
+    if (categoryId !== undefined && !(await categoryBelongsToUser(categoryId, req.userId))) {
+      return res.status(400).json({ error: 'Invalid category for this user' });
+    }
 
     const update = { updatedAt: new Date() };
     if (title !== undefined) update.title = title;

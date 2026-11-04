@@ -12,6 +12,7 @@ const noteSchema = new mongoose.Schema({
   sourceProvider: { type: String, default: '' },
   sourceUrl:      { type: String, default: '' },
   personalNotes:  { type: String, default: '' },
+  isPublic:       { type: Boolean, default: false, index: true },
 
   createdAt:      { type: Date, default: Date.now },
   updatedAt:      { type: Date, default: Date.now },

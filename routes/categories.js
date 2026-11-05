@@ -22,7 +22,8 @@ router.get('/', auth, async (req, res) => {
 // @access  Private
 router.post('/', auth, async (req, res) => {
   try {
-    const { name } = req.body;
+    const { name, imageUrl = null } = req.body;
+    if (imageUrl !== null && (typeof imageUrl !== 'string' || !/^https?:\/\//i.test(imageUrl) || imageUrl.length > 2048)) return res.status(400).json({ error: 'Image URL must be a valid HTTP or HTTPS URL' });
     if (!name || !name.trim()) {
       return res.status(400).json({ error: 'Category name is required' });
     }
@@ -41,6 +42,7 @@ router.post('/', auth, async (req, res) => {
     const category = await Category.create({
       userId: req.userId,
       name: trimmed,
+      imageUrl,
       isDefault: false,
     });
 
@@ -56,17 +58,17 @@ router.post('/', auth, async (req, res) => {
 // @access  Private
 router.patch('/:id', auth, async (req, res) => {
   try {
-    const { name } = req.body;
-    if (!name || !name.trim()) {
+    const { name, imageUrl } = req.body;
+    if (imageUrl !== undefined && imageUrl !== null && (typeof imageUrl !== 'string' || !/^https?:\/\//i.test(imageUrl) || imageUrl.length > 2048)) return res.status(400).json({ error: 'Image URL must be a valid HTTP or HTTPS URL' });
+    if (name !== undefined && (typeof name !== 'string' || !name.trim())) {
       return res.status(400).json({ error: 'Category name is required' });
     }
-
-    const trimmed = name.trim();
     const category = await Category.findOne({ _id: req.params.id, userId: req.userId });
     if (!category) {
       return res.status(404).json({ error: 'Category not found' });
     }
 
+    const trimmed = name === undefined ? category.name : name.trim();
     const duplicate = await Category.findOne({
       userId: req.userId,
       _id: { $ne: category._id },
@@ -77,6 +79,7 @@ router.patch('/:id', auth, async (req, res) => {
     }
 
     category.name = trimmed;
+    if (imageUrl !== undefined) category.imageUrl = imageUrl;
     await category.save();
 
     res.json({ category });

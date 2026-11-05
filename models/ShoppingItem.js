@@ -21,6 +21,9 @@ const shoppingItemSchema = new mongoose.Schema({
     ref: 'User',
     required: true,
   },
+  familyKey: { type: String, default: null, index: true },
+  assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  assignedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   priority: {
     type: String,
     enum: ['low', 'medium', 'high'],

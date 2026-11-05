@@ -6,6 +6,7 @@ const { createClerkClient, verifyToken } = require('@clerk/backend');
 const User = require('../models/User');
 const Category = require('../models/Category');
 const auth = require('../middleware/auth');
+const { verifiedPrimaryEmail } = require('../services/clerkIdentity');
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -44,7 +45,6 @@ router.post('/clerk', async (req, res) => {
     // Verify Clerk session token using standalone verifyToken
     let clerkUserId;
     try {
-      console.log('CLERK_SECRET_KEY prefix:', process.env.CLERK_SECRET_KEY?.substring(0, 10));
       const payload = await verifyToken(sessionToken, {
   secretKey: process.env.CLERK_SECRET_KEY,
   jwtKey: process.env.CLERK_JWT_KEY, // supports offline local verification
@@ -66,13 +66,13 @@ router.post('/clerk', async (req, res) => {
 
     // Fetch full Clerk user to get email + name
     const clerkUser = await clerkClient.users.getUser(clerkUserId);
-    const email = clerkUser.emailAddresses?.[0]?.emailAddress;
+    const email = verifiedPrimaryEmail(clerkUser);
     const name  = clerkUser.firstName
       ? `${clerkUser.firstName} ${clerkUser.lastName || ''}`.trim()
       : (email?.split('@')[0] || 'User');
     const avatar = clerkUser.imageUrl || '';
 
-    if (!email) return res.status(400).json({ error: 'No email on Clerk account' });
+    if (!email) return res.status(400).json({ error: 'A verified primary email is required to sign in.' });
 
     // Find or create user in our DB — clerkId or email match
     let user = await User.findOne({ $or: [{ clerkId: clerkUserId }, { email }] });
@@ -82,6 +82,7 @@ router.post('/clerk', async (req, res) => {
       await user.save();
       await createDefaultCategories(user._id);
     } else {
+      if (user.clerkId && user.clerkId !== clerkUserId) return res.status(409).json({ error: 'This email is linked to another account.' });
       // Backfill clerkId if missing (existing user signing in via Clerk for first time)
       if (!user.clerkId) {
         user.clerkId = clerkUserId;
@@ -125,36 +126,10 @@ router.post('/google', async (req, res) => {
 });
 
 // @route   POST /api/auth/email/send-otp
-router.post('/email/send-otp', async (req, res) => {
-  try {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ error: 'Email is required' });
-    res.json({ message: 'OTP sent successfully (DEV MODE: any OTP will work)', email });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to send OTP' });
-  }
-});
+router.post('/email/send-otp', (_req, res) => res.status(503).json({ error: 'Legacy email verification is unavailable. Please use Clerk sign-in.' }));
 
 // @route   POST /api/auth/email/verify-otp
-router.post('/email/verify-otp', async (req, res) => {
-  try {
-    const { email, otp, name } = req.body;
-    if (!email || !otp) return res.status(400).json({ error: 'Email and OTP are required' });
-
-    let user = await User.findOne({ email });
-    if (!user) {
-      if (!name) return res.status(400).json({ error: 'Name is required for new users' });
-      user = new User({ name, email });
-      await user.save();
-      await createDefaultCategories(user._id);
-    }
-
-    const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '30d' });
-    res.json({ token, user: userPayload(user) });
-  } catch (error) {
-    res.status(500).json({ error: 'Authentication failed' });
-  }
-});
+router.post('/email/verify-otp', (_req, res) => res.status(503).json({ error: 'Legacy email verification is unavailable. Please use Clerk sign-in.' }));
 
 // @route   POST /api/auth/register
 router.post('/register', async (req, res) => {

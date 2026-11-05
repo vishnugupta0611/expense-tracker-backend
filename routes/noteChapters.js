@@ -288,7 +288,7 @@ async function reserveChunkSequences(noteId, count, latestSequence) {
         },
       },
     }],
-    { new: true, projection: { chunkSeqCounter: 1 } }
+    { returnDocument: 'after', updatePipeline: true, projection: { chunkSeqCounter: 1 } }
   ).lean();
 
   if (!updatedNote) throw new Error('Could not reserve chapter chunk sequence values');

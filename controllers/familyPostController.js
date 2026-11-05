@@ -2,43 +2,10 @@ const crypto = require('crypto');
 const FamilyPost = require('../models/FamilyPost');
 const cloudinary = require('cloudinary').v2;
 const dotenv = require('dotenv');
-const admin = require('../config/firebase');
-const User = require('../models/User');
+const { notifyFamily } = require('../services/familyNotificationService');
 dotenv.config();
 const streamifier = require('streamifier');
 const isUserInFamily = (user, familyKey) => user.familyKey && user.familyKey === familyKey;
-
-const sendFCMNotification = async (fcmToken, title, body, imageUrl = null) => {
-  if (!fcmToken) {
-    console.warn('No FCM token provided for notification');
-    return;
-  }
-
-  try {
-    const message = {
-      token: fcmToken,
-      notification: {
-        title,
-        body,
-      },
-    };
-
-    if (imageUrl) {
-      message.webpush = {
-        notification: {
-          image: imageUrl,
-          icon: imageUrl,
-          requireInteraction: true,
-        },
-      };
-    }
-
-    const response = await admin.messaging().send(message);
-    console.log('Notification sent:', response);
-  } catch (err) {
-    console.error('FCM notification error:', err.message);
-  }
-};
 
 const extractPublicIdFromUrl = (url) => {
   // Extract public_id from Cloudinary URL
@@ -121,23 +88,16 @@ const createFamilyPost = async (req, res) => {
 
     console.log('New Family Post:', { text, files: files && files.length, familyKey, frameType: selectedFrameType });
 
-    if (!text || !files || files.length === 0 || !familyKey || !selectedFrameType) {
-      return res.status(400).json({ error: 'Text, files, familyKey and frameType are required' });
+    if ((!text?.trim() && (!files || files.length === 0)) || !familyKey || !selectedFrameType) {
+      return res.status(400).json({ error: 'Add a caption or photo, familyKey and frameType' });
     }
-
-    const uploadedMedia = await upload_tocloudinary(files);
-    console.log('Uploaded Media URLs:', uploadedMedia);
-
-   //lwts check by sending notification to yourself using firebase admin sdk
-   //i have my own fcm token
- 
-    // const response = await admin.messaging().send(message);
-
-// console.log("Notification sent:", response);
 
     if (!isUserInFamily(req.user, familyKey)) {
       return res.status(403).json({ error: 'You are not a member of this family' });
     }
+
+    const uploadedMedia = files?.length ? await upload_tocloudinary(files) : [];
+    console.log('Uploaded Media URLs:', uploadedMedia);
 
     const post = new FamilyPost({
       text,
@@ -150,35 +110,10 @@ const createFamilyPost = async (req, res) => {
     await post.save();
     await post.populate('userId', 'name email avatar');
 
-    // Send notifications to all family members (including self for post confirmation)
-    try {
-      const familyMembers = await User.find({ familyKey }).select('fcmtoken _id');
-      const posterToken = familyMembers.find(m => m._id.toString() === req.userId.toString())?.fcmtoken;
-
-      // Self notification — "post posted successfully"
-      if (posterToken) {
-        sendFCMNotification(
-          posterToken,
-          '✅ Post shared!',
-          'Your post was posted successfully',
-          uploadedMedia[0]
-        );
-      }
-
-      // Notify other family members
-      familyMembers.forEach((member) => {
-        if (member.fcmtoken && member._id.toString() !== req.userId.toString()) {
-          sendFCMNotification(
-            member.fcmtoken,
-            `📸 ${post.userId.name} shared a post`,
-            text || 'Shared a new family post',
-            uploadedMedia[0]
-          );
-        }
-      });
-    } catch (err) {
-      console.error('Failed to send post notifications:', err.message);
-    }
+    notifyFamily({ familyKey, actorId: req.userId,
+      title: `${post.userId?.name || 'Family'} shared a post`,
+      body: text || 'Shared a new family post', type: 'family_post', itemId: post._id,
+    }).catch(() => console.warn('Family post notification could not be delivered'));
 
     res.status(201).json({ post });
   } catch (error) {
@@ -210,21 +145,11 @@ const fluctuateLike = async (req, res) => {
 
     await post.save();
 
-    // Send notification to post creator if liked
     if (liked) {
-      try {
-        const postCreator = await User.findById(post.userId).select('fcmtoken name');
-        const likedByUser = await User.findById(req.userId).select('name avatar');
-        if (postCreator?.fcmtoken) {
-          sendFCMNotification(
-            postCreator.fcmtoken,
-            `❤️ ${likedByUser?.name || 'Someone'} liked your post`,
-            'Your post got a like!'
-          );
-        }
-      } catch (err) {
-        console.error('Failed to send like notification:', err.message);
-      }
+      notifyFamily({ familyKey: post.familyKey, actorId: req.userId, recipientId: post.userId,
+        title: `${req.user.name || 'Someone'} liked your post`, body: 'Your post got a like!',
+        type: 'family_post', itemId: post._id,
+      }).catch(() => console.warn('Family like notification could not be delivered'));
     }
 
     res.json({
@@ -266,20 +191,10 @@ const createComment = async (req, res) => {
     await post.save();
     await post.populate('comments.userId', 'name email avatar');
 
-    // Send notification to post creator
-    try {
-      const postCreator = await User.findById(post.userId).select('fcmtoken name');
-      const commentedByUser = await User.findById(req.userId).select('name avatar');
-      if (postCreator?.fcmtoken) {
-        sendFCMNotification(
-          postCreator.fcmtoken,
-          `💬 ${commentedByUser?.name || 'Someone'} commented on your post`,
-          text || 'New comment on your post'
-        );
-      }
-    } catch (err) {
-      console.error('Failed to send comment notification:', err.message);
-    }
+    notifyFamily({ familyKey: post.familyKey, actorId: req.userId, recipientId: post.userId,
+      title: `${req.user.name || 'Someone'} commented on your post`, body: text,
+      type: 'family_post', itemId: post._id,
+    }).catch(() => console.warn('Family comment notification could not be delivered'));
 
     res.status(201).json({
       comment: post.comments[post.comments.length - 1],

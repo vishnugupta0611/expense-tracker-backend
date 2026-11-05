@@ -2,6 +2,34 @@ const express = require('express');
 const router = express.Router();
 const auth = require('../middleware/auth');
 const ScheduleEvent = require('../models/ScheduleEvent');
+const mongoose = require('mongoose');
+const fields = ['title', 'startTime', 'endTime', 'category', 'days', 'specialDate', 'notes', 'reminder', 'reminderType', 'reminderSound'];
+const timePattern = /^([01]\d|2[0-3]):[0-5]\d$/;
+function validateInput(body, event, isCreate) {
+  const value = key => body[key] !== undefined ? body[key] : event?.[key];
+  if (typeof value('title') !== 'string' || !value('title').trim()) return 'Event title is required';
+  if (!timePattern.test(value('startTime') || '')) return 'Start time must be HH:mm';
+  if (value('endTime') && !timePattern.test(value('endTime'))) return 'End time must be HH:mm';
+  const days = value('days') || [];
+  if (!Array.isArray(days) || days.some(d => !['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].includes(d)) || new Set(days).size !== days.length) return 'Invalid repeat days';
+  const date = value('specialDate');
+  if (body.specialDate != null) {
+    if (typeof body.specialDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(body.specialDate)) return 'Date must be YYYY-MM-DD';
+    const parsed = new Date(body.specialDate + 'T00:00:00.000Z');
+    if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== body.specialDate) return 'Invalid date';
+  }
+  if (date && days.length) return 'Choose a date or repeat days, not both';
+  if ((isCreate || body.days !== undefined || body.specialDate !== undefined) && !date && !days.length) return 'Choose a date or at least one repeat day';
+  if (body.reminder !== undefined && typeof body.reminder !== 'boolean') return 'Reminder must be a boolean';
+  if (body.reminderType !== undefined && !['notification','alarm'].includes(body.reminderType)) return 'Invalid reminder type';
+  if (body.reminderSound !== undefined && !['default','silent'].includes(body.reminderSound)) return 'Invalid reminder sound';
+  return null;
+}
+function handleError(res, error) {
+  if (error instanceof mongoose.Error.ValidationError || error instanceof mongoose.Error.CastError) return res.status(400).json({ message: error.message });
+  console.error('Schedule event error:', error);
+  return res.status(500).json({ message: 'Server error' });
+}
 
 // Get all schedule events for the authenticated user
 router.get('/', auth, async (req, res) => {
@@ -17,32 +45,15 @@ router.get('/', auth, async (req, res) => {
 // Create a new schedule event
 router.post('/', auth, async (req, res) => {
   try {
-    const { title, startTime, endTime, category, days, specialDate, notes, reminder } = req.body;
-
-    if (!title || !title.trim()) {
-      return res.status(400).json({ message: 'Event title is required' });
-    }
-    if (!startTime) {
-      return res.status(400).json({ message: 'Start time is required' });
-    }
-
-    const event = new ScheduleEvent({
-      title: title.trim(),
-      startTime,
-      endTime: endTime || '',
-      category: category || 'personal',
-      days: days || [],
-      specialDate: specialDate || null,
-      notes: notes || '',
-      reminder: reminder || false,
-      userId: req.userId,
-    });
+    const error = validateInput(req.body, null, true);
+    if (error) return res.status(400).json({ message: error });
+    const data = Object.fromEntries(fields.filter(key => req.body[key] !== undefined).map(key => [key, req.body[key]]));
+    const event = new ScheduleEvent({ ...data, userId: req.userId });
 
     const saved = await event.save();
     res.status(201).json(saved);
   } catch (error) {
-    console.error('Error creating schedule event:', error);
-    res.status(500).json({ message: 'Server error' });
+    return handleError(res, error);
   }
 });
 
@@ -55,22 +66,14 @@ router.put('/:id', auth, async (req, res) => {
       return res.status(404).json({ message: 'Event not found' });
     }
 
-    const { title, startTime, endTime, category, days, specialDate, notes, reminder } = req.body;
-
-    if (title !== undefined) event.title = title.trim();
-    if (startTime !== undefined) event.startTime = startTime;
-    if (endTime !== undefined) event.endTime = endTime;
-    if (category !== undefined) event.category = category;
-    if (days !== undefined) event.days = days;
-    if (specialDate !== undefined) event.specialDate = specialDate;
-    if (notes !== undefined) event.notes = notes;
-    if (reminder !== undefined) event.reminder = reminder;
+    const error = validateInput(req.body, event, false);
+    if (error) return res.status(400).json({ message: error });
+    for (const key of fields) if (req.body[key] !== undefined) event[key] = req.body[key];
 
     const updated = await event.save();
     res.json(updated);
   } catch (error) {
-    console.error('Error updating schedule event:', error);
-    res.status(500).json({ message: 'Server error' });
+    return handleError(res, error);
   }
 });
 
@@ -85,8 +88,7 @@ router.delete('/:id', auth, async (req, res) => {
 
     res.json({ message: 'Event deleted successfully' });
   } catch (error) {
-    console.error('Error deleting schedule event:', error);
-    res.status(500).json({ message: 'Server error' });
+    return handleError(res, error);
   }
 });
 

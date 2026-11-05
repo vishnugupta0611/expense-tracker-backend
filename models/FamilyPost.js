@@ -36,7 +36,7 @@ const likeSchema = new mongoose.Schema({
 const familyPostSchema = new mongoose.Schema({
   text: {
     type: String,
-    required: true,
+    default: '',
     trim: true,
   },
   //image will be an array of strings (URLs) to support multiple images per post

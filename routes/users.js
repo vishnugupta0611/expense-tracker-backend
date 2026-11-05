@@ -49,11 +49,12 @@ router.post('/upload-avatar', auth, upload.single('avatar'), async (req, res) =>
 // @access  Private
 router.put('/profile', auth, async (req, res) => {
   try {
-    const { defaultView, budgets, name, avatar } = req.body;
+    const { defaultView, mobileStartupView, budgets, name, avatar } = req.body;
     
     const updates = {};
     if (name) updates.name = name;
     if (defaultView) updates.defaultView = defaultView;
+    if (mobileStartupView !== undefined) updates.mobileStartupView = mobileStartupView;
     if (avatar !== undefined) updates.avatar = avatar;
     
     // Handle budget updates

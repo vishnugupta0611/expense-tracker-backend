@@ -38,6 +38,8 @@ const scheduleEventSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
+  reminderType: { type: String, enum: ['notification', 'alarm'], default: 'notification' },
+  reminderSound: { type: String, enum: ['default', 'silent'], default: 'default' },
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',

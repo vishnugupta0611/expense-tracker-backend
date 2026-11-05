@@ -26,6 +26,7 @@ const userPayload = (user) => ({
   name:        user.name,
   email:       user.email,
   defaultView: user.defaultView,
+  mobileStartupView: user.mobileStartupView,
   avatar:      user.avatar,
   familyKey:   user.familyKey,
 });

@@ -37,6 +37,11 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: 'family',
   },
+  mobileStartupView: {
+    type: String,
+    enum: ['home', 'social', 'chat', 'expenses', 'shopping', 'schedule', 'notes', 'drive', 'gallery', 'summary', 'words'],
+    default: 'home',
+  },
   telegramId: {
     type: String,
   },

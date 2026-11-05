@@ -41,6 +41,7 @@ app.use('/api/shopping-list', require('./routes/shoppingList'));
 app.use('/api/wallet', require('./routes/wallet'));
 app.use('/api/schedule-events', require('./routes/scheduleEvents'));
 app.use('/api/notes', require('./routes/notes'));
+app.use('/api/updates', require('./routes/updates'));
 app.use('/api/notes/:noteId/chapters', require('./routes/noteChapters'));
 app.use('/api/drive', require('./routes/drive'));
 app.use('/api/words', require('./routes/words'));
@@ -52,8 +53,10 @@ app.use('/api/telegram-bot', require('./routes/telegram_bot'));
 // Initialize Job Board Services
 const { initWhatsApp } = require('./services/whatsappService');
 const { startCron } = require('./services/cronService');
-initWhatsApp();
-startCron();
+if (process.env.DISABLE_BACKGROUND_JOBS !== 'true') {
+  initWhatsApp();
+  startCron();
+}
 
 // Health check
 app.get('/health', (req, res) => {
